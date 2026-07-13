@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CNCacheHub 控制台原型</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#020617',
+            panel: '#0f172a',
+            panel2: '#111827',
+            line: '#1f2937',
+            mint: '#2dd4bf',
+            violet: '#8b5cf6',
+            lime: '#a3e635'
+          },
+          boxShadow: {
+            glow: '0 0 40px rgba(45,212,191,.22)',
+            card: '0 24px 80px rgba(0,0,0,.36)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .grid-bg { background-image: radial-gradient(circle at 20% 20%, rgba(45,212,191,.14), transparent 26%), radial-gradient(circle at 80% 10%, rgba(139,92,246,.18), transparent 28%), linear-gradient(rgba(148,163,184,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.045) 1px, transparent 1px); background-size: auto, auto, 42px 42px, 42px 42px; }
+    .glass { background: rgba(15,23,42,.72); backdrop-filter: blur(24px); border: 1px solid rgba(148,163,184,.16); box-shadow: 0 24px 80px rgba(0,0,0,.24); }
+    .soft { background: linear-gradient(135deg, rgba(15,23,42,.94), rgba(17,24,39,.74)); border: 1px solid rgba(148,163,184,.14); }
+    .nav-item { color: #94a3b8; transition: .22s ease; }
+    .nav-item:hover { color: #f8fafc; background: rgba(148,163,184,.09); transform: translateX(2px); }
+    .nav-item.active { color: #ecfeff; background: linear-gradient(90deg, rgba(45,212,191,.18), rgba(139,92,246,.10)); border-color: rgba(45,212,191,.28); box-shadow: inset 3px 0 0 #2dd4bf; }
+    .page { display: none; animation: rise .32s ease both; }
+    .page.active { display: block; }
+    @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .chip { border: 1px solid rgba(148,163,184,.16); background: rgba(15,23,42,.78); }
+    .code { background: #020617; border: 1px solid rgba(45,212,191,.18); color: #ccfbf1; text-shadow: 0 0 18px rgba(45,212,191,.08); }
+    .scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,.26); border-radius: 999px; }
+    .dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+    .pulse { animation: pulse 1.8s ease infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .38; } }
+    .bar span { display:block; height:100%; border-radius:999px; background: linear-gradient(90deg,#2dd4bf,#8b5cf6); }
+    .btn { transition: .2s ease; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:active { transform: translateY(1px) scale(.99); }
+    .table-row:hover { background: rgba(148,163,184,.06); }
+  </style>
+</head>
+<body class="min-h-screen bg-ink text-slate-100 grid-bg antialiased">
+  <div class="fixed inset-0 pointer-events-none overflow-hidden">
+    <div class="absolute -top-28 left-1/3 h-96 w-96 rounded-full bg-mint/10 blur-3xl"></div>
+    <div class="absolute top-40 -right-20 h-[30rem] w-[30rem] rounded-full bg-violet/10 blur-3xl"></div>
+  </div>
+
+  <div class="relative flex min-h-screen">
+    <aside class="fixed left-5 top-5 bottom-5 w-72 glass rounded-[2rem] p-5 flex flex-col z-20">
+      <a href="#dashboard" data-go="dashboard" class="flex items-center gap-3 px-3 py-3 rounded-2xl bg-white/[.04] border border-white/[.08]">
+        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
+          <i class="fa-solid fa-layer-group text-ink text-xl"></i>
+        </div>
+        <div>
+          <div class="text-lg font-semibold tracking-tight">CNCacheHub</div>
+          <div class="text-xs text-slate-400">自托管下载加速中枢</div>
+        </div>
+      </a>
+
+      <nav class="mt-6 space-y-1.5 text-sm">
+        <a class="nav-item active flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#dashboard" data-go="dashboard"><i class="fa-solid fa-chart-line w-5"></i>总览仪表盘</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#docker" data-go="docker"><i class="fa-brands fa-docker w-5"></i>Docker 加速</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#steamcmd" data-go="steamcmd"><i class="fa-brands fa-steam w-5"></i>SteamCMD 加速</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#clients" data-go="clients"><i class="fa-solid fa-file-code w-5"></i>客户端配置</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#preheat" data-go="preheat"><i class="fa-solid fa-fire-flame-curved w-5"></i>预热任务</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#diagnostics" data-go="diagnostics"><i class="fa-solid fa-stethoscope w-5"></i>诊断中心</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#cache" data-go="cache"><i class="fa-solid fa-database w-5"></i>缓存管理</a>
+        <a class="nav-item flex items-center gap-3 rounded-2xl border border-transparent px-4 py-3" href="#logs" data-go="logs"><i class="fa-solid fa-list-ul w-5"></i>请求日志</a>
+      </nav>
+
+      <div class="mt-auto space-y-3">
+        <div class="rounded-3xl border border-mint/20 bg-mint/10 p-4">
+          <div class="flex items-center gap-2 text-sm font-medium text-mint"><span class="dot bg-mint pulse"></span>公网安全提醒</div>
+          <p class="mt-2 text-xs leading-5 text-slate-300">当前代理入口已开启 IP 白名单，Docker 只读 Token 已启用。</p>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <a href="#setup" data-go="setup" class="btn rounded-2xl bg-white/[.05] px-3 py-2 text-center text-slate-300 hover:bg-white/[.08]">初始化预览</a>
+          <a href="#login" data-go="login" class="btn rounded-2xl bg-white/[.05] px-3 py-2 text-center text-slate-300 hover:bg-white/[.08]">登录页预览</a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="ml-80 w-[calc(100%-20rem)] px-6 py-5">
+      <header class="sticky top-5 z-10 mb-6 glass rounded-[2rem] px-5 py-4 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-slate-400">生产环境 / 华东 VPS 节点</div>
+          <h1 id="pageTitle" class="text-2xl font-semibold tracking-tight">总览仪表盘</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="hidden xl:flex items-center gap-2 rounded-2xl bg-white/[.05] px-4 py-2 text-sm text-slate-300">
+            <i class="fa-solid fa-magnifying-glass text-slate-500"></i>
+            <span>搜索镜像、AppID、日志、客户端 IP</span>
+          </div>
+          <button class="btn rounded-2xl bg-white/[.06] px-4 py-2 text-sm hover:bg-white/[.10]" data-go="diagnostics"><i class="fa-solid fa-bolt text-lime mr-2"></i>快速诊断</button>
+          <button class="btn rounded-2xl bg-gradient-to-r from-mint to-violet px-4 py-2 text-sm font-semibold text-ink shadow-glow" data-go="clients">生成配置</button>
+        </div>
+      </header>
+
+      <section class="page active" data-page="dashboard" data-title="总览仪表盘">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-8 soft rounded-[2rem] overflow-hidden relative p-7">
+            <img class="absolute inset-0 h-full w-full object-cover opacity-[.12]" src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1600&q=80" alt="数据中心背景" />
+            <div class="relative flex items-start justify-between gap-8">
+              <div>
+                <div class="inline-flex items-center gap-2 rounded-full border border-mint/25 bg-mint/10 px-3 py-1 text-xs text-mint"><span class="dot bg-mint pulse"></span>全部核心服务运行中</div>
+                <h2 class="mt-5 max-w-2xl text-4xl font-semibold leading-tight tracking-tight">把 Docker 拉取、SteamCMD 下载和缓存诊断收进一个控制台。</h2>
+                <p class="mt-4 max-w-2xl text-slate-300 leading-7">自托管代理缓存网关，首发稳定支持 Docker Hub，扩展支持 GHCR、Quay、registry.k8s.io 与 Steam 内容缓存。</p>
+                <div class="mt-6 flex flex-wrap gap-3">
+                  <button class="btn rounded-2xl bg-mint px-5 py-3 text-sm font-semibold text-ink shadow-glow" data-go="clients"><i class="fa-solid fa-copy mr-2"></i>生成 Docker 配置</button>
+                  <button class="btn rounded-2xl bg-white/[.08] px-5 py-3 text-sm text-slate-100 hover:bg-white/[.12]" data-go="steamcmd"><i class="fa-brands fa-steam mr-2"></i>启动 SteamCMD 向导</button>
+                </div>
+              </div>
+              <div class="hidden 2xl:block w-64 rounded-[1.5rem] border border-white/[.10] bg-black/30 p-4">
+                <div class="text-xs text-slate-400">当前加速入口</div>
+                <div class="mt-2 text-sm font-medium text-mint">https://docker.cache.local</div>
+                <div class="mt-4 h-2 rounded-full bg-slate-800 bar"><span style="width:82%"></span></div>
+                <div class="mt-2 flex justify-between text-xs text-slate-400"><span>命中率</span><span>82.7%</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-span-4 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm text-slate-400">缓存容量</div>
+                <div class="mt-2 text-3xl font-semibold">384.6GB</div>
+              </div>
+              <div class="h-20 w-20 rounded-full" style="background: conic-gradient(#2dd4bf 0 38%, #8b5cf6 38% 62%, #334155 62% 100%);"></div>
+            </div>
+            <div class="mt-6 space-y-3 text-sm">
+              <div class="flex items-center justify-between"><span class="text-slate-400">Docker/OCI</span><span>246.1GB</span></div>
+              <div class="flex items-center justify-between"><span class="text-slate-400">Steam 内容</span><span>126.8GB</span></div>
+              <div class="flex items-center justify-between"><span class="text-slate-400">资源加速</span><span>11.7GB</span></div>
+            </div>
+          </div>
+
+          <div class="col-span-12 grid grid-cols-6 gap-4">
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">今日请求</div><div class="mt-2 text-2xl font-semibold">18,420</div><div class="mt-2 text-xs text-mint">较昨日 +12.4%</div></div>
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">缓存命中率</div><div class="mt-2 text-2xl font-semibold">82.7%</div><div class="mt-2 text-xs text-mint">目标 >= 70%</div></div>
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">当前吞吐</div><div class="mt-2 text-2xl font-semibold">126MB/s</div><div class="mt-2 text-xs text-slate-400">出站峰值 341MB/s</div></div>
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">上游健康</div><div class="mt-2 text-2xl font-semibold">4 / 5</div><div class="mt-2 text-xs text-amber-300">gcr.io 延迟偏高</div></div>
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">运行时间</div><div class="mt-2 text-2xl font-semibold">21 天</div><div class="mt-2 text-xs text-slate-400">无异常重启</div></div>
+            <div class="soft rounded-3xl p-5"><div class="text-sm text-slate-400">待处理诊断</div><div class="mt-2 text-2xl font-semibold">2</div><div class="mt-2 text-xs text-rose-300">DNS / 证书</div></div>
+          </div>
+
+          <div class="col-span-8 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-semibold">24 小时请求与命中趋势</h3>
+              <div class="flex gap-2 text-xs text-slate-400"><span><i class="fa-solid fa-circle text-mint mr-1"></i>请求</span><span><i class="fa-solid fa-circle text-violet mr-1"></i>命中</span></div>
+            </div>
+            <div class="mt-6 flex h-56 items-end gap-2">
+              <div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:38%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:44%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:31%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:58%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:63%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:49%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:72%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:86%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:77%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:92%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:81%"></span></div><div class="bar flex-1 rounded-t-xl bg-slate-800"><span style="height:68%"></span></div>
+            </div>
+          </div>
+
+          <div class="col-span-4 soft rounded-[2rem] p-6">
+            <h3 class="text-lg font-semibold">快捷操作</h3>
+            <div class="mt-5 space-y-3">
+              <button data-go="clients" class="btn w-full rounded-2xl bg-mint px-4 py-3 text-left font-semibold text-ink"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i>复制 Docker 加速配置</button>
+              <button data-go="preheat" class="btn w-full rounded-2xl bg-white/[.06] px-4 py-3 text-left hover:bg-white/[.10]"><i class="fa-solid fa-fire mr-2 text-orange-300"></i>新建镜像预热任务</button>
+              <button data-go="diagnostics" class="btn w-full rounded-2xl bg-white/[.06] px-4 py-3 text-left hover:bg-white/[.10]"><i class="fa-solid fa-screwdriver-wrench mr-2 text-lime"></i>排查拉取失败</button>
+              <button data-go="steamcmd" class="btn w-full rounded-2xl bg-white/[.06] px-4 py-3 text-left hover:bg-white/[.10]"><i class="fa-brands fa-steam mr-2 text-sky-300"></i>配置 SteamCMD DNS</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="docker" data-title="Docker 加速">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-12 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between">
+              <div><h2 class="text-2xl font-semibold">Registry 代理缓存</h2><p class="mt-2 text-slate-400">每个上游独立健康检查、缓存策略和访问控制。</p></div>
+              <button class="btn rounded-2xl bg-mint px-5 py-3 font-semibold text-ink" data-go="clients">生成客户端配置</button>
+            </div>
+            <div class="mt-6 overflow-hidden rounded-3xl border border-white/[.08]">
+              <table class="w-full text-sm">
+                <thead class="bg-white/[.04] text-slate-400"><tr><th class="p-4 text-left">Registry</th><th class="p-4 text-left">本地入口</th><th class="p-4 text-left">状态</th><th class="p-4 text-left">今日请求</th><th class="p-4 text-left">命中率</th><th class="p-4 text-left">缓存</th><th class="p-4 text-left">操作</th></tr></thead>
+                <tbody class="divide-y divide-white/[.06]">
+                  <tr class="table-row"><td class="p-4 font-medium"><i class="fa-brands fa-docker text-sky-300 mr-2"></i>Docker Hub</td><td class="p-4 text-mint">docker.cache.local</td><td class="p-4"><span class="dot bg-mint mr-2"></span>健康</td><td class="p-4">12,804</td><td class="p-4">86.1%</td><td class="p-4">246GB</td><td class="p-4"><a href="#clients" data-go="clients" class="text-mint">配置</a></td></tr>
+                  <tr class="table-row"><td class="p-4 font-medium">GHCR</td><td class="p-4 text-mint">ghcr.cache.local</td><td class="p-4"><span class="dot bg-mint mr-2"></span>健康</td><td class="p-4">2,941</td><td class="p-4">78.4%</td><td class="p-4">58GB</td><td class="p-4"><a href="#logs" data-go="logs" class="text-mint">日志</a></td></tr>
+                  <tr class="table-row"><td class="p-4 font-medium">registry.k8s.io</td><td class="p-4 text-mint">k8s.cache.local</td><td class="p-4"><span class="dot bg-mint mr-2"></span>健康</td><td class="p-4">1,676</td><td class="p-4">91.8%</td><td class="p-4">37GB</td><td class="p-4"><a href="#preheat" data-go="preheat" class="text-mint">预热</a></td></tr>
+                  <tr class="table-row"><td class="p-4 font-medium">Quay</td><td class="p-4 text-mint">quay.cache.local</td><td class="p-4"><span class="dot bg-mint mr-2"></span>健康</td><td class="p-4">882</td><td class="p-4">74.2%</td><td class="p-4">19GB</td><td class="p-4"><a href="#cache" data-go="cache" class="text-mint">缓存</a></td></tr>
+                  <tr class="table-row"><td class="p-4 font-medium">gcr.io</td><td class="p-4 text-mint">gcr.cache.local</td><td class="p-4"><span class="dot bg-amber-300 mr-2"></span>延迟高</td><td class="p-4">117</td><td class="p-4">61.5%</td><td class="p-4">9GB</td><td class="p-4"><a href="#diagnostics" data-go="diagnostics" class="text-amber-300">诊断</a></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="col-span-5 soft rounded-[2rem] p-6">
+            <h3 class="text-lg font-semibold">Docker Hub 详情</h3>
+            <div class="mt-5 space-y-4 text-sm">
+              <div class="flex justify-between"><span class="text-slate-400">上游地址</span><span>registry-1.docker.io</span></div>
+              <div class="flex justify-between"><span class="text-slate-400">Manifest TTL</span><span>6 小时</span></div>
+              <div class="flex justify-between"><span class="text-slate-400">Blob 保留</span><span>30 天</span></div>
+              <div class="flex justify-between"><span class="text-slate-400">访问控制</span><span class="text-mint">内网 + Token</span></div>
+              <div class="flex justify-between"><span class="text-slate-400">最近错误</span><span class="text-amber-300">Rate limit 2 次</span></div>
+            </div>
+          </div>
+          <div class="col-span-7 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between"><h3 class="text-lg font-semibold">快速接入 Docker Engine</h3><button class="btn rounded-xl bg-white/[.08] px-3 py-2 text-sm" data-copy="#dockerCode">复制</button></div>
+            <pre id="dockerCode" class="code mt-4 overflow-auto rounded-2xl p-4 text-sm leading-6 scrollbar">sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json &lt;&lt;'EOF'
+{
+  "registry-mirrors": ["https://docker.cache.local"]
+}
+EOF
+sudo systemctl restart docker
+docker pull nginx:latest</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="steamcmd" data-title="SteamCMD 加速">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-8 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between"><div><h2 class="text-2xl font-semibold">Steam 内容缓存</h2><p class="mt-2 text-slate-400">通过 DNS + HTTP 缓存复用 SteamCMD 下载内容，适合游戏服集群。</p></div><button id="steamToggle" class="btn rounded-2xl bg-mint px-5 py-3 font-semibold text-ink">启用模块</button></div>
+            <div class="mt-6 grid grid-cols-4 gap-4">
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="text-xs text-slate-400">DNS 服务</div><div class="mt-2 font-semibold"><span class="dot bg-mint mr-2"></span>运行中</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="text-xs text-slate-400">缓存服务</div><div class="mt-2 font-semibold"><span class="dot bg-mint mr-2"></span>运行中</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="text-xs text-slate-400">规则版本</div><div class="mt-2 font-semibold">2026.07</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="text-xs text-slate-400">24h 命中率</div><div class="mt-2 font-semibold text-mint">73.4%</div></div>
+            </div>
+            <div class="mt-6 overflow-hidden rounded-3xl border border-white/[.08]">
+              <table class="w-full text-sm">
+                <thead class="bg-white/[.04] text-slate-400"><tr><th class="p-4 text-left">AppID</th><th class="p-4 text-left">服务端</th><th class="p-4 text-left">登录</th><th class="p-4 text-left">缓存</th><th class="p-4 text-left">命中率</th><th class="p-4 text-left">操作</th></tr></thead>
+                <tbody class="divide-y divide-white/[.06]">
+                  <tr class="table-row"><td class="p-4">730</td><td class="p-4 font-medium">CS2 Dedicated Server</td><td class="p-4">anonymous</td><td class="p-4">38.2GB</td><td class="p-4 text-mint">81%</td><td class="p-4"><a class="text-mint" href="#preheat" data-go="preheat">预热</a></td></tr>
+                  <tr class="table-row"><td class="p-4">2394010</td><td class="p-4 font-medium">Palworld Dedicated Server</td><td class="p-4">anonymous</td><td class="p-4">21.6GB</td><td class="p-4 text-mint">76%</td><td class="p-4"><a class="text-mint" href="#clients" data-go="clients">命令</a></td></tr>
+                  <tr class="table-row"><td class="p-4">896660</td><td class="p-4 font-medium">Valheim Dedicated Server</td><td class="p-4">anonymous</td><td class="p-4">7.4GB</td><td class="p-4 text-mint">88%</td><td class="p-4"><a class="text-mint" href="#diagnostics" data-go="diagnostics">诊断</a></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="col-span-4 soft rounded-[2rem] p-6">
+            <h3 class="text-lg font-semibold">SteamCMD Docker 示例</h3>
+            <p class="mt-2 text-sm text-slate-400">让容器 DNS 指向 CNCacheHub，下载请求即可进入缓存网关。</p>
+            <button class="btn mt-5 rounded-xl bg-white/[.08] px-3 py-2 text-sm" data-copy="#steamCode">复制命令</button>
+            <pre id="steamCode" class="code mt-3 overflow-auto rounded-2xl p-4 text-xs leading-6 scrollbar">docker run --rm \
+  --dns 192.168.1.10 \
+  -v /data/steamapps:/steamapps \
+  cm2network/steamcmd \
+  +login anonymous \
+  +app_update 2394010 validate \
+  +quit</pre>
+            <div class="mt-5 rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm leading-6 text-amber-100">如服务器磁盘较小，可在系统设置中开启「小容量 VPS 优化」，开启后 Steam 大文件会按策略旁路或建议外接存储。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="clients" data-title="客户端配置">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-4 soft rounded-[2rem] p-6">
+            <h2 class="text-2xl font-semibold">配置生成器</h2>
+            <div class="mt-6 space-y-4">
+              <label class="block text-sm text-slate-400">使用场景</label>
+              <div class="grid grid-cols-2 gap-3 text-sm">
+                <button class="btn rounded-2xl bg-mint/15 border border-mint/30 px-4 py-3 text-mint">Docker Engine</button>
+                <button class="btn rounded-2xl bg-white/[.05] px-4 py-3">containerd</button>
+                <button class="btn rounded-2xl bg-white/[.05] px-4 py-3">k3s / rke2</button>
+                <button class="btn rounded-2xl bg-white/[.05] px-4 py-3">SteamCMD</button>
+              </div>
+              <label class="block pt-3 text-sm text-slate-400">目标系统</label>
+              <div class="rounded-2xl bg-white/[.05] p-4 text-sm">Debian / Ubuntu + systemd</div>
+              <label class="block pt-3 text-sm text-slate-400">加速地址</label>
+              <div class="rounded-2xl bg-white/[.05] p-4 text-sm text-mint">https://docker.cache.local</div>
+              <button class="btn w-full rounded-2xl bg-gradient-to-r from-mint to-violet px-5 py-3 font-semibold text-ink">重新生成配置</button>
+            </div>
+          </div>
+          <div class="col-span-8 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between"><h3 class="text-lg font-semibold">生成结果</h3><button class="btn rounded-xl bg-white/[.08] px-3 py-2 text-sm" data-copy="#clientCode">复制全部</button></div>
+            <pre id="clientCode" class="code mt-4 min-h-[430px] overflow-auto rounded-2xl p-5 text-sm leading-7 scrollbar"># 1. 写入 Docker daemon 配置
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json &lt;&lt;'EOF'
+{
+  "registry-mirrors": ["https://docker.cache.local"],
+  "max-concurrent-downloads": 8
+}
+EOF
+
+# 2. 重启 Docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+# 3. 验证加速是否生效
+docker pull hello-world
+docker pull nginx:latest
+
+# 4. 回滚方式
+sudo rm /etc/docker/daemon.json
+sudo systemctl restart docker</pre>
+            <div class="mt-4 grid grid-cols-3 gap-3 text-sm">
+              <div class="rounded-2xl bg-mint/10 p-4 text-mint">验证命令已包含</div>
+              <div class="rounded-2xl bg-violet/10 p-4 text-violet-200">支持导出配置包</div>
+              <div class="rounded-2xl bg-white/[.05] p-4 text-slate-300">公网建议开启 Token</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="preheat" data-title="预热任务">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-5 soft rounded-[2rem] p-6">
+            <h2 class="text-2xl font-semibold">新建预热任务</h2>
+            <p class="mt-2 text-slate-400">批量输入镜像名或 Steam AppID，提前写入缓存。</p>
+            <textarea class="mt-5 h-56 w-full resize-none rounded-3xl border border-white/[.08] bg-black/30 p-4 text-sm text-slate-200 outline-none focus:border-mint/40" spellcheck="false">nginx:latest
+redis:7
+postgres:16
+registry.k8s.io/pause:3.9
+quay.io/prometheus/prometheus:v2.52.0</textarea>
+            <button class="btn mt-4 w-full rounded-2xl bg-mint px-5 py-3 font-semibold text-ink">创建预热任务</button>
+          </div>
+          <div class="col-span-7 soft rounded-[2rem] p-6">
+            <h3 class="text-lg font-semibold">任务队列</h3>
+            <div class="mt-5 space-y-4">
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="flex justify-between"><span class="font-medium">Kubernetes 基础镜像预热</span><span class="text-mint">运行中 68%</span></div><div class="mt-3 h-2 rounded-full bg-slate-800 bar"><span style="width:68%"></span></div><div class="mt-3 text-xs text-slate-400">当前：registry.k8s.io/pause:3.9 · 42MB/s · 重试 0 次</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="flex justify-between"><span class="font-medium">Steam AppID 2394010</span><span class="text-mint">成功</span></div><div class="mt-3 h-2 rounded-full bg-slate-800 bar"><span style="width:100%"></span></div><div class="mt-3 text-xs text-slate-400">Palworld Dedicated Server · 21.6GB · 命中率预计提升 76%</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4"><div class="flex justify-between"><span class="font-medium">Docker Hub 常用基础镜像</span><span class="text-amber-300">部分成功</span></div><div class="mt-3 h-2 rounded-full bg-slate-800 bar"><span style="width:84%"></span></div><div class="mt-3 text-xs text-slate-400">gcr.io/distroless/base 上游延迟高，已安排重试。</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="diagnostics" data-title="诊断中心">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-5 soft rounded-[2rem] p-6">
+            <h2 class="text-2xl font-semibold">下载失败诊断</h2>
+            <div class="mt-5 grid grid-cols-2 gap-3 text-sm">
+              <button class="rounded-2xl bg-mint/15 border border-mint/30 px-4 py-3 text-mint">Docker 拉取失败</button>
+              <button class="rounded-2xl bg-white/[.05] px-4 py-3">SteamCMD 下载慢</button>
+              <button class="rounded-2xl bg-white/[.05] px-4 py-3">DNS 未生效</button>
+              <button class="rounded-2xl bg-white/[.05] px-4 py-3">磁盘/证书问题</button>
+            </div>
+            <input class="mt-5 w-full rounded-2xl border border-white/[.08] bg-black/30 px-4 py-3 outline-none focus:border-mint/40" value="docker pull nginx:latest" />
+            <button id="runDiag" class="btn mt-4 w-full rounded-2xl bg-mint px-5 py-3 font-semibold text-ink">开始诊断</button>
+          </div>
+          <div class="col-span-7 soft rounded-[2rem] p-6">
+            <h3 class="text-lg font-semibold">诊断结果</h3>
+            <div id="diagResult" class="mt-5 rounded-3xl border border-mint/20 bg-mint/10 p-5">
+              <div class="text-xl font-semibold text-mint"><i class="fa-solid fa-circle-check mr-2"></i>配置已生效</div>
+              <p class="mt-3 leading-7 text-slate-300">控制台在 2 秒内捕获到来自 192.168.1.42 的 Docker Hub 请求，镜像层已命中缓存。</p>
+              <div class="mt-5 grid grid-cols-2 gap-3 text-sm">
+                <div class="rounded-2xl bg-black/20 p-4"><div class="text-slate-400">证据</div><div class="mt-1">请求日志 #req_9482</div></div>
+                <div class="rounded-2xl bg-black/20 p-4"><div class="text-slate-400">修复建议</div><div class="mt-1">无需处理，可继续使用</div></div>
+              </div>
+            </div>
+            <div class="mt-5 space-y-3 text-sm">
+              <div class="flex items-center gap-3"><span class="dot bg-mint"></span>DNS 解析正常</div>
+              <div class="flex items-center gap-3"><span class="dot bg-mint"></span>上游 Docker Hub 可访问</div>
+              <div class="flex items-center gap-3"><span class="dot bg-mint"></span>缓存目录可写，剩余 22GB</div>
+              <div class="flex items-center gap-3"><span class="dot bg-mint"></span>TLS 证书有效期 86 天</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="cache" data-title="缓存管理">
+        <div class="grid grid-cols-12 gap-5">
+          <div class="col-span-4 soft rounded-[2rem] p-6">
+            <h2 class="text-2xl font-semibold">缓存占用</h2>
+            <div class="mx-auto mt-8 h-52 w-52 rounded-full" style="background: conic-gradient(#2dd4bf 0 42%, #8b5cf6 42% 64%, #a3e635 64% 67%, #334155 67% 100%);"></div>
+            <div class="mt-6 text-center"><div class="text-3xl font-semibold">384.6GB</div><div class="text-sm text-slate-400">总容量 1TB，当前标准缓存策略</div></div>
+            <div class="mt-6 rounded-3xl border border-mint/20 bg-mint/10 p-4">
+              <div class="text-sm font-medium text-mint"><i class="fa-solid fa-shield-heart mr-2"></i>容量守护已开启</div>
+              <p class="mt-2 text-xs leading-5 text-slate-300">标准策略下超过 85% 自动执行 LRU 清理；小容量 VPS 优化可在系统设置中单独开启。</p>
+            </div>
+          </div>
+          <div class="col-span-8 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between"><h3 class="text-lg font-semibold">可清理对象</h3><div class="flex gap-2"><button id="dryRunBtn" class="btn rounded-2xl bg-white/[.08] px-4 py-2 text-sm">预演清理</button><button class="btn rounded-2xl bg-rose-400/15 px-4 py-2 text-sm text-rose-200">清理选中项</button></div></div>
+            <div class="mt-5 space-y-3 text-sm">
+              <div class="rounded-3xl bg-white/[.05] p-4 flex items-center justify-between"><div><div class="font-medium">Docker Hub / library</div><div class="mt-1 text-slate-400">最近访问 3 小时前 · 已锁定 nginx、redis</div></div><div class="text-right"><div>142.4GB</div><div class="text-mint">保留</div></div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4 flex items-center justify-between"><div><div class="font-medium">Steam / AppID 730</div><div class="mt-1 text-slate-400">最近访问 8 小时前 · CS2 服务端</div></div><div class="text-right"><div>38.2GB</div><div class="text-mint">高频</div></div></div>
+              <div class="rounded-3xl bg-white/[.05] p-4 flex items-center justify-between"><div><div class="font-medium">gcr.io / 旧版本层</div><div class="mt-1 text-slate-400">最近访问 42 天前 · 可按 LRU 清理</div></div><div class="text-right"><div>9.6GB</div><div class="text-amber-300">建议清理</div></div></div>
+            </div>
+          </div>
+          <div class="col-span-12 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between">
+              <div><h3 class="text-xl font-semibold">小容量 VPS 优化</h3><p class="mt-2 text-sm text-slate-400">这是统一项目里的设置开关，适合磁盘较小的 VPS；关闭时继续使用标准缓存策略。</p></div>
+              <button class="btn rounded-2xl bg-white/[.08] px-4 py-2 text-sm">当前关闭</button>
+            </div>
+            <div class="mt-5 grid grid-cols-4 gap-4 text-sm">
+              <div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">建议开启条件</div><div class="mt-2 text-2xl font-semibold">&lt; 40GB</div><div class="mt-2 text-xs text-slate-500">系统只提示，不强制切换</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">系统保底空间</div><div class="mt-2 text-2xl font-semibold">5GB</div><div class="mt-2 text-xs text-slate-500">开启后生效</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">单对象限制</div><div class="mt-2 text-2xl font-semibold">可配置</div><div class="mt-2 text-xs text-slate-500">默认 1GB，可自定义</div></div>
+              <div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">大文件处理</div><div class="mt-2 text-2xl font-semibold">旁路/阻止</div><div class="mt-2 text-xs text-slate-500">由设置开关控制</div></div>
+            </div>
+          </div>
+          <div class="col-span-12 soft rounded-[2rem] p-6">
+            <div class="flex items-center justify-between">
+              <div><h3 class="text-xl font-semibold">定时清理任务</h3><p class="mt-2 text-sm text-slate-400">按 Cron、容量水位、模块配额自动清理，执行前可 dry-run 预估释放空间。</p></div>
+              <button class="btn rounded-2xl bg-mint px-5 py-3 font-semibold text-ink"><i class="fa-solid fa-plus mr-2"></i>新建清理任务</button>
+            </div>
+            <div class="mt-5 grid grid-cols-4 gap-4 text-sm">
+              <div class="rounded-3xl bg-white/[.05] p-5">
+                <div class="flex items-center justify-between"><span class="font-medium">容量水位清理</span><span class="text-mint">启用</span></div>
+                <div class="mt-3 text-slate-400 leading-6">触发：总占用 &gt; 85%<br>目标：回收到 75%<br>策略：LRU + 低命中优先</div>
+                <div class="mt-4 rounded-2xl bg-black/25 p-3 text-xs text-slate-300">下次检查：10 分钟后</div>
+              </div>
+              <div class="rounded-3xl bg-white/[.05] p-5">
+                <div class="flex items-center justify-between"><span class="font-medium">每日临时文件</span><span class="text-mint">启用</span></div>
+                <div class="mt-3 text-slate-400 leading-6">时间：每天 03:30<br>范围：失败分片 / 临时目录<br>保留：24 小时</div>
+                <div class="mt-4 rounded-2xl bg-black/25 p-3 text-xs text-slate-300">上次释放：4.8GB</div>
+              </div>
+              <div class="rounded-3xl bg-white/[.05] p-5">
+                <div class="flex items-center justify-between"><span class="font-medium">低命中缓存</span><span class="text-amber-300">预演</span></div>
+                <div class="mt-3 text-slate-400 leading-6">时间：每周日 04:30<br>范围：30 天未访问<br>保护：已 pin 对象</div>
+                <div class="mt-4 rounded-2xl bg-black/25 p-3 text-xs text-amber-200">预计释放：62.3GB</div>
+              </div>
+              <div class="rounded-3xl bg-white/[.05] p-5">
+                <div class="flex items-center justify-between"><span class="font-medium">旧日志清理</span><span class="text-mint">启用</span></div>
+                <div class="mt-3 text-slate-400 leading-6">时间：每天 04:00<br>详细日志：7 天<br>聚合指标：30 天</div>
+                <div class="mt-4 rounded-2xl bg-black/25 p-3 text-xs text-slate-300">上次释放：1.2GB</div>
+              </div>
+            </div>
+            <div id="cleanupPreview" class="mt-5 hidden rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5 text-sm text-amber-100">
+              <div class="font-semibold"><i class="fa-solid fa-magnifying-glass-chart mr-2"></i>Dry-run 结果：预计释放 76.9GB</div>
+              <p class="mt-2 leading-6">将删除 1,284 个 30 天未访问对象，其中 Docker 旧层 9.6GB、Steam 旧版本内容 62.3GB、临时文件 5.0GB；已保护 17 个 pin 对象，不会被删除。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="logs" data-title="请求日志">
+        <div class="soft rounded-[2rem] p-6">
+          <div class="flex items-center justify-between"><div><h2 class="text-2xl font-semibold">结构化请求日志</h2><p class="mt-2 text-slate-400">从日志直接发起诊断，快速定位配置未生效、上游超时或缓存错误。</p></div><button class="btn rounded-2xl bg-white/[.08] px-4 py-2 text-sm">导出日志</button></div>
+          <div class="mt-5 flex gap-3 text-sm"><div class="chip rounded-2xl px-4 py-2">最近 24 小时</div><div class="chip rounded-2xl px-4 py-2">模块：全部</div><div class="chip rounded-2xl px-4 py-2">状态：HIT / MISS / ERROR</div><div class="chip rounded-2xl px-4 py-2">关键词：nginx</div></div>
+          <div class="mt-5 overflow-hidden rounded-3xl border border-white/[.08]">
+            <table class="w-full text-sm">
+              <thead class="bg-white/[.04] text-slate-400"><tr><th class="p-4 text-left">时间</th><th class="p-4 text-left">客户端</th><th class="p-4 text-left">模块</th><th class="p-4 text-left">资源</th><th class="p-4 text-left">状态</th><th class="p-4 text-left">耗时</th><th class="p-4 text-left">操作</th></tr></thead>
+              <tbody class="divide-y divide-white/[.06]">
+                <tr class="table-row"><td class="p-4">17:12:08</td><td class="p-4">192.168.1.42</td><td class="p-4">Docker</td><td class="p-4">nginx:latest</td><td class="p-4 text-mint">HIT 200</td><td class="p-4">38ms</td><td class="p-4"><a href="#diagnostics" data-go="diagnostics" class="text-mint">诊断</a></td></tr>
+                <tr class="table-row"><td class="p-4">17:10:44</td><td class="p-4">10.0.0.9</td><td class="p-4">Steam</td><td class="p-4">AppID 2394010</td><td class="p-4 text-mint">MISS 206</td><td class="p-4">12.4s</td><td class="p-4"><a href="#steamcmd" data-go="steamcmd" class="text-mint">查看</a></td></tr>
+                <tr class="table-row"><td class="p-4">17:08:31</td><td class="p-4">172.16.2.7</td><td class="p-4">gcr.io</td><td class="p-4">distroless/base</td><td class="p-4 text-amber-300">ERROR 504</td><td class="p-4">30.0s</td><td class="p-4"><a href="#diagnostics" data-go="diagnostics" class="text-amber-300">修复</a></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="security" data-title="安全设置">
+        <div class="grid grid-cols-2 gap-5">
+          <div class="soft rounded-[2rem] p-6"><h2 class="text-2xl font-semibold">代理访问控制</h2><div class="mt-5 space-y-4 text-sm"><div class="rounded-2xl bg-mint/10 p-4 text-mint">公网部署已启用 Token</div><div class="rounded-2xl bg-white/[.05] p-4">IP 白名单：192.168.0.0/16、10.0.0.0/8</div><div class="rounded-2xl bg-white/[.05] p-4">单 IP 并发限制：16</div></div></div>
+          <div class="soft rounded-[2rem] p-6"><h2 class="text-2xl font-semibold">控制台登录</h2><div class="mt-5 space-y-4 text-sm"><div class="rounded-2xl bg-white/[.05] p-4">会话有效期：12 小时</div><div class="rounded-2xl bg-white/[.05] p-4">失败锁定：5 次 / 10 分钟</div><div class="rounded-2xl bg-white/[.05] p-4">敏感配置：本地加密存储</div></div></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="settings" data-title="系统设置">
+        <div class="soft rounded-[2rem] p-6"><h2 class="text-2xl font-semibold">系统设置</h2><div class="mt-6 grid grid-cols-4 gap-4 text-sm"><div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">公开地址</div><div class="mt-2 text-mint">https://cache.example.com</div></div><div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">小容量 VPS 优化</div><div class="mt-2 text-slate-200">关闭</div><div class="mt-2 text-xs text-slate-500">低磁盘时建议开启</div></div><div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">缓存目录</div><div class="mt-2">/var/lib/cncachehub/cache</div></div><div class="rounded-3xl bg-white/[.05] p-5"><div class="text-slate-400">自动清理阈值</div><div class="mt-2">85% → 75%</div></div></div></div>
+      </section>
+
+      <section class="page" data-page="setup" data-title="初始化向导">
+        <div class="soft rounded-[2rem] p-7">
+          <h2 class="text-3xl font-semibold">首次初始化</h2><p class="mt-2 text-slate-400">7 步完成部署模式、缓存策略、缓存目录、模块启用和环境自检。</p>
+          <div class="mt-8 grid grid-cols-7 gap-3 text-sm">
+            <div class="rounded-3xl bg-mint/15 border border-mint/30 p-4 text-mint">1 管理员</div><div class="rounded-3xl bg-white/[.05] p-4">2 部署模式</div><div class="rounded-3xl bg-white/[.05] p-4">3 缓存策略</div><div class="rounded-3xl bg-white/[.05] p-4">4 缓存配置</div><div class="rounded-3xl bg-white/[.05] p-4">5 启用模块</div><div class="rounded-3xl bg-white/[.05] p-4">6 环境自检</div><div class="rounded-3xl bg-white/[.05] p-4">7 生成配置</div>
+          </div>
+          <div class="mt-8 grid grid-cols-3 gap-5"><div class="rounded-[2rem] bg-white/[.05] p-6"><h3 class="text-lg font-semibold">管理员设置</h3><input class="mt-5 w-full rounded-2xl bg-black/30 px-4 py-3" value="admin"/><input class="mt-3 w-full rounded-2xl bg-black/30 px-4 py-3" value="••••••••••"/><button class="btn mt-4 rounded-2xl bg-mint px-5 py-3 font-semibold text-ink">继续</button></div><div class="rounded-[2rem] bg-mint/10 border border-mint/25 p-6"><h3 class="text-lg font-semibold text-mint">缓存策略：标准策略</h3><div class="mt-5 space-y-3 text-sm"><div>小容量 VPS 优化：关闭</div><div>检测到小磁盘时会建议开启</div><div>开启后可限制单对象大小</div><div>可随时在系统设置调整</div></div></div><div class="rounded-[2rem] bg-white/[.05] p-6"><h3 class="text-lg font-semibold">环境自检预览</h3><div class="mt-5 space-y-3 text-sm"><div><span class="dot bg-mint mr-2"></span>Docker Hub 可访问</div><div><span class="dot bg-mint mr-2"></span>缓存目录可写，剩余 615GB</div><div><span class="dot bg-amber-300 mr-2"></span>53 端口被占用，Steam DNS 需换端口或停用占用服务</div></div></div></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="login" data-title="登录页预览">
+        <div class="min-h-[720px] grid place-items-center">
+          <div class="glass w-[460px] rounded-[2rem] p-8 text-center">
+            <div class="mx-auto h-16 w-16 rounded-3xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow"><i class="fa-solid fa-layer-group text-2xl text-ink"></i></div>
+            <h2 class="mt-6 text-3xl font-semibold">登录 CNCacheHub</h2><p class="mt-2 text-slate-400">管理你的自托管 Docker 与 SteamCMD 加速网关。</p>
+            <input class="mt-8 w-full rounded-2xl border border-white/[.08] bg-black/30 px-4 py-3 text-left outline-none" value="admin" />
+            <input class="mt-3 w-full rounded-2xl border border-white/[.08] bg-black/30 px-4 py-3 text-left outline-none" value="••••••••••" />
+            <button class="btn mt-5 w-full rounded-2xl bg-mint px-5 py-3 font-semibold text-ink" data-go="dashboard">进入控制台</button>
+            <div class="mt-5 text-xs text-slate-500">版本 v0.1.0 · 密码错误 5 次将临时锁定</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 left-1/2 z-50 hidden -translate-x-1/2 rounded-2xl border border-mint/25 bg-slate-950/90 px-5 py-3 text-sm text-mint shadow-glow backdrop-blur-xl">已复制到剪贴板</div>
+
+  <script>
+    const titleMap = {};
+    document.querySelectorAll('[data-page]').forEach(page => titleMap[page.dataset.page] = page.dataset.title || 'CNCacheHub');
+
+    function showPage(name) {
+      const pageName = titleMap[name] ? name : 'dashboard';
+      document.querySelectorAll('[data-page]').forEach(page => page.classList.toggle('active', page.dataset.page === pageName));
+      document.querySelectorAll('[data-go]').forEach(item => item.classList.toggle('active', item.dataset.go === pageName && item.classList.contains('nav-item')));
+      document.getElementById('pageTitle').textContent = titleMap[pageName];
+      if (location.hash !== '#' + pageName) history.replaceState(null, '', '#' + pageName);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    document.addEventListener('click', event => {
+      const go = event.target.closest('[data-go]');
+      if (go) { event.preventDefault(); showPage(go.dataset.go); }
+    });
+
+    window.addEventListener('hashchange', () => showPage(location.hash.replace('#','')));
+    showPage(location.hash.replace('#','') || 'dashboard');
+
+    function toast(text = '已复制到剪贴板') {
+      const el = document.getElementById('toast');
+      el.textContent = text;
+      el.classList.remove('hidden');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => el.classList.add('hidden'), 1800);
+    }
+
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const target = document.querySelector(btn.dataset.copy);
+        const text = target ? target.innerText : '';
+        try { await navigator.clipboard.writeText(text); toast(); }
+        catch { toast('复制失败，请手动选中文本'); }
+      });
+    });
+
+    document.getElementById('runDiag')?.addEventListener('click', () => {
+      document.getElementById('diagResult').innerHTML = '<div class="text-xl font-semibold text-mint"><i class="fa-solid fa-circle-check mr-2"></i>诊断完成：Docker 加速已生效</div><p class="mt-3 leading-7 text-slate-300">检测到客户端已经通过 docker.cache.local 请求 Docker Hub，nginx:latest 第二次拉取命中缓存，平均响应 38ms。</p><div class="mt-5 grid grid-cols-2 gap-3 text-sm"><div class="rounded-2xl bg-black/20 p-4"><div class="text-slate-400">证据</div><div class="mt-1">HIT / req_9482 / 192.168.1.42</div></div><div class="rounded-2xl bg-black/20 p-4"><div class="text-slate-400">下一步</div><div class="mt-1">可将配置批量下发到 CI 节点</div></div></div>';
+      toast('诊断完成');
+    });
+
+    document.getElementById('steamToggle')?.addEventListener('click', e => {
+      e.currentTarget.textContent = '模块已启用';
+      toast('SteamCMD 加速模块已启用');
+    });
+
+    document.getElementById('dryRunBtn')?.addEventListener('click', () => {
+      document.getElementById('cleanupPreview')?.classList.remove('hidden');
+      toast('清理预演完成');
+    });
+  </script>
+</body>
+</html>
