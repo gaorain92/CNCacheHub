@@ -1,0 +1,23 @@
+# 编译时排除
+bin/
+data/
+*.log
+coverage.out
+*.out
+*.test
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+*.md
+README.md
+Dockerfile
+.dockerignore
+Makefile
+deploy/
+scripts/
+docs/
+prototype/
+web/
+agent/

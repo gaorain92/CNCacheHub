@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #app {
+    min-height: 100vh;
+    background-color: #020617;
+    color: #e2e8f0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* 背景：双圆点光斑 + 细网格 */
+  .grid-bg {
+    background-image:
+      radial-gradient(circle at 20% 20%, rgba(45, 212, 191, 0.14), transparent 26%),
+      radial-gradient(circle at 80% 10%, rgba(139, 92, 246, 0.18), transparent 28%),
+      linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      42px 42px,
+      42px 42px;
+  }
+
+  /* 玻璃感卡片 */
+  .glass {
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(24px);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+  }
+
+  /* 软卡片（深色渐变） */
+  .soft {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(17, 24, 39, 0.74));
+    border: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  /* 状态点 */
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+
+  /* 按钮基础（hover/active 动效） */
+  .btn {
+    transition:
+      transform 0.2s ease,
+      background-color 0.2s ease,
+      box-shadow 0.2s ease,
+      border-color 0.2s ease,
+      color 0.2s ease;
+  }
+  .btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px) scale(0.99);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* 代码块 */
+  .code {
+    background: #020617;
+    border: 1px solid rgba(45, 212, 191, 0.18);
+    color: #ccfbf1;
+    text-shadow: 0 0 18px rgba(45, 212, 191, 0.08);
+  }
+
+  /* 表格行 hover */
+  .table-row:hover {
+    background: rgba(148, 163, 184, 0.06);
+  }
+}
+
+@layer utilities {
+  /* 文本选择色 */
+  ::selection {
+    background-color: rgba(45, 212, 191, 0.32);
+    color: #f8fafc;
+  }
+
+  /* Element Plus dark overrides — 透明化让 Tailwind 卡片样式生效 */
+  .el-table,
+  .el-input__wrapper,
+  .el-card {
+    background-color: transparent !important;
+  }
+
+  /* 自定义滚动条 */
+  .scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.26);
+    border-radius: 999px;
+  }
+  .scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
