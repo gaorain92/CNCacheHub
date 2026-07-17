@@ -1,47 +1,26 @@
-# CNCacheHub 生产环境 Caddy 反代配置
-# 部署到生产前请修改 PUBLIC_DOMAIN 变量
+# CNCacheHub 反代配置（HTTP 模式，无域名场景）
+# 适用：公网只有 IP，没法用 Let's Encrypt
 
-{
-    # 邮件用于 Let's Encrypt 申请证书
-    email {$ADMIN_EMAIL:admin@example.com}
-}
-
-# 主入口（HTTPS）
-{$PUBLIC_DOMAIN:cache.example.com} {
-    # API 与控制台
+:80 {
+    # API 与健康检查反代到后端
     reverse_proxy /api/* server:8080
-    reverse_proxy /web/* server:8080
     reverse_proxy /healthz server:8080
 
-    # 静态前端（由 server 提供的 / 路径反向代理到 web 容器）
+    # 其它（/）反代到前端
     reverse_proxy / web:80
 
     # 安全响应头
     header {
-        # 防止 clickjacking
         X-Frame-Options "SAMEORIGIN"
-        # 防止 MIME 嗅探
         X-Content-Type-Options "nosniff"
-        # XSS 保护
         X-XSS-Protection "1; mode=block"
-        # Referrer 策略
         Referrer-Policy "strict-origin-when-cross-origin"
-        # 移除 server 头
         -Server
     }
 
-    # 访问日志
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 100mb
-            roll_keep 10
-        }
-    }
-
     encode gzip zstd
-}
 
-# Docker registry pull-through cache 入口（HTTP，简化部署；可加 TLS）
-:5000 {
-    reverse_proxy server:8080
+    log {
+        output stdout
+    }
 }
