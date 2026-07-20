@@ -15,9 +15,17 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CNCH_HTTP_ADDR", "")
 	t.Setenv("CNCH_DATA_DIR", "")
+	t.Setenv("CNCH_LOG_DIR", "")
 	t.Setenv("CNCH_LOG_LEVEL", "")
 	t.Setenv("CNCH_ADMIN_PASSWORD", "")
 	t.Setenv("CNCH_SHUTDOWN_TIMEOUT_SECONDS", "")
+	t.Setenv("CNCH_CACHE_DIR", "")
+	t.Setenv("CNCH_UPSTREAM_REGISTRY", "")
+	t.Setenv("CNCH_UPSTREAM_TIMEOUT_SECONDS", "")
+	t.Setenv("CNCH_SMALL_VPS_OPT", "")
+	t.Setenv("CNCH_RESERVE_SPACE_GB", "")
+	t.Setenv("CNCH_MAX_OBJECT_SIZE_MB", "")
+	t.Setenv("CNCH_CACHE_TOTAL_GB", "")
 }
 
 // TestLoad_Defaults 验证全部使用默认值。
@@ -47,6 +55,28 @@ func TestLoad_Defaults(t *testing.T) {
 		if !strings.HasSuffix(c.DBPath, "cncachehub.db") {
 			t.Errorf("DBPath = %q, want suffix cncachehub.db", c.DBPath)
 		}
+	}
+	// Phase 1 新字段默认
+	if c.CacheDir != "./cache" {
+		t.Errorf("CacheDir = %q, want ./cache", c.CacheDir)
+	}
+	if c.UpstreamRegistry != "https://registry-1.docker.io" {
+		t.Errorf("UpstreamRegistry = %q", c.UpstreamRegistry)
+	}
+	if c.UpstreamTimeout.Seconds() != 60 {
+		t.Errorf("UpstreamTimeout = %v, want 60s", c.UpstreamTimeout)
+	}
+	if c.SmallVPSOpt != false {
+		t.Errorf("SmallVPSOpt = %v, want false", c.SmallVPSOpt)
+	}
+	if c.ReserveSpaceGB != 5 {
+		t.Errorf("ReserveSpaceGB = %d, want 5", c.ReserveSpaceGB)
+	}
+	if c.MaxObjectSizeMB != 1024 {
+		t.Errorf("MaxObjectSizeMB = %d, want 1024", c.MaxObjectSizeMB)
+	}
+	if c.CacheTotalGB != 20 {
+		t.Errorf("CacheTotalGB = %d, want 20", c.CacheTotalGB)
 	}
 }
 
@@ -136,6 +166,114 @@ func TestLogLevelCaseInsensitive(t *testing.T) {
 	}
 	if c.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want debug", c.LogLevel)
+	}
+}
+
+// TestLoad_Phase1_Overrides 验证 Phase 1 新字段的环境变量覆盖。
+func TestLoad_Phase1_Overrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_CACHE_DIR", "/var/cache/cnch")
+	t.Setenv("CNCH_UPSTREAM_REGISTRY", "https://my-mirror.example.com/")
+	t.Setenv("CNCH_UPSTREAM_TIMEOUT_SECONDS", "120")
+	t.Setenv("CNCH_SMALL_VPS_OPT", "true")
+	t.Setenv("CNCH_RESERVE_SPACE_GB", "10")
+	t.Setenv("CNCH_MAX_OBJECT_SIZE_MB", "2048")
+	t.Setenv("CNCH_CACHE_TOTAL_GB", "100")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if c.CacheDir != "/var/cache/cnch" {
+		t.Errorf("CacheDir = %q", c.CacheDir)
+	}
+	if c.UpstreamRegistry != "https://my-mirror.example.com" {
+		// 末尾 / 应被 TrimRight
+		t.Errorf("UpstreamRegistry = %q, want trailing slash trimmed", c.UpstreamRegistry)
+	}
+	if c.UpstreamTimeout.Seconds() != 120 {
+		t.Errorf("UpstreamTimeout = %v, want 120s", c.UpstreamTimeout)
+	}
+	if c.SmallVPSOpt != true {
+		t.Errorf("SmallVPSOpt = %v, want true", c.SmallVPSOpt)
+	}
+	if c.ReserveSpaceGB != 10 {
+		t.Errorf("ReserveSpaceGB = %d, want 10", c.ReserveSpaceGB)
+	}
+	if c.MaxObjectSizeMB != 2048 {
+		t.Errorf("MaxObjectSizeMB = %d, want 2048", c.MaxObjectSizeMB)
+	}
+	if c.CacheTotalGB != 100 {
+		t.Errorf("CacheTotalGB = %d, want 100", c.CacheTotalGB)
+	}
+}
+
+// TestLoad_InvalidUpstream 验证非法 upstream URL 报错。
+func TestLoad_InvalidUpstream(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_UPSTREAM_REGISTRY", "not-a-url")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid UPSTREAM_REGISTRY")
+	}
+	if !IsInvalidConfig(err) {
+		t.Errorf("expected ErrInvalidConfig, got: %v", err)
+	}
+}
+
+// TestLoad_InvalidUpstreamTimeout 验证非法 upstream timeout 报错。
+func TestLoad_InvalidUpstreamTimeout(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_UPSTREAM_TIMEOUT_SECONDS", "abc")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid UPSTREAM_TIMEOUT_SECONDS")
+	}
+}
+
+// TestLoad_SmallVPSOptVariants 验证 bool 解析的多种写法。
+func TestLoad_SmallVPSOptVariants(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{"true", true},
+		{"TRUE", true},
+		{"1", true},
+		{"yes", true},
+		{"on", true},
+		{"false", false},
+		{"0", false},
+		{"no", false},
+		{"off", false},
+		{"", false},  // 空字符串 → 默认 false
+		{"garbage", false}, // 解析失败 → 默认 false
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("CNCH_SMALL_VPS_OPT", tc.raw)
+			c, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if c.SmallVPSOpt != tc.want {
+				t.Errorf("SmallVPSOpt = %v, want %v (raw=%q)", c.SmallVPSOpt, tc.want, tc.raw)
+			}
+		})
+	}
+}
+
+// TestLoad_OutOfRangeInt 验证越界 int 走默认值。
+func TestLoad_OutOfRangeInt(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_RESERVE_SPACE_GB", "-1") // min=0, 越界
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if c.ReserveSpaceGB != 5 { // 默认值
+		t.Errorf("ReserveSpaceGB = %d, want 5 (default after OOR)", c.ReserveSpaceGB)
 	}
 }
 

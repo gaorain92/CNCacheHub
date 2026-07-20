@@ -38,6 +38,27 @@ type BuildInfo struct {
 	Commit  string // 提交 SHA（默认 "local"）
 }
 
+// AccessLogRecord 是 /v2/* 访问日志的简版（与 storage.AccessLogRecord 同形但解耦）。
+//
+// api 包不直接 import storage（避免循环），所以这里独立定义 record 类型。
+// main.go 注入 AccessLogWriter 时负责转换。
+type AccessLogRecord struct {
+	Method     string
+	Path       string
+	Status     int
+	DurationMs int64
+	Cached     bool
+	Bypassed   bool
+	ClientIP   string
+	Bytes      int64
+	Error      string
+}
+
+// AccessLogWriter 把访问日志异步落盘（由 main.go 注入，连接 storage.DB）。
+type AccessLogWriter interface {
+	WriteAccessLog(ctx context.Context, rec AccessLogRecord) error
+}
+
 // Options 注入 Server 依赖。
 type Options struct {
 	DB        interface {
@@ -45,6 +66,38 @@ type Options struct {
 	}
 	StartTime time.Time
 	Build     BuildInfo
+	// ProxyHandler 处理 /v2/* 请求（registry 反代）；nil 时 /v2/* 返回 503。
+	ProxyHandler http.Handler
+	// AccessLogWriter 写访问日志；nil 时不记。
+	AccessLogWriter AccessLogWriter
+	// GetUpstreams 列出 enabled upstreams（api/dashboard 用）。
+	GetUpstreams func(ctx context.Context) ([]Upstream, error)
+	// GetDashboardSummary 聚合仪表盘数据。
+	GetDashboardSummary func(ctx context.Context) (DashboardSummary, error)
+	// GetAccessLogs 分页查询 request_logs。
+	GetAccessLogs func(ctx context.Context, page, pageSize int) ([]AccessLogRecord, int, error)
+}
+
+// Upstream 是 /api/docker/upstreams 返回的列表项。
+type Upstream struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	UpstreamURL string `json:"upstreamUrl"`
+	MirrorPath  string `json:"mirrorPath"`
+	Enabled     bool   `json:"enabled"`
+}
+
+// DashboardSummary 是 /api/dashboard/summary 返回的聚合。
+type DashboardSummary struct {
+	CacheEntries    int   `json:"cacheEntries"`
+	CacheBytes      int64 `json:"cacheBytes"`
+	HitCount        int64 `json:"hitCount"`
+	MissCount       int64 `json:"missCount"`
+	RequestCount24h int   `json:"requestCount24h"`
+	ErrorCount24h   int   `json:"errorCount24h"`
+	BytesOut24h     int64 `json:"bytesOut24h"`
+	ActiveUpstreams int   `json:"activeUpstreams"`
+	GeneratedAt     int64 `json:"generatedAt"`
 }
 
 // NewRouter 构造配置好的 chi 路由。
@@ -68,7 +121,26 @@ func NewRouter(opts Options) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/healthz", apiHealthHandler(opts))
 		r.Get("/version", versionHandler(opts.Build))
+		r.Get("/docker/upstreams", upstreamsHandler(opts))
+		r.Get("/docker/daemon.json", daemonJSONHandler(opts))
+		r.Get("/cache/entries", cacheEntriesHandler(opts))
+		r.Get("/logs", accessLogsHandler(opts))
+		r.Get("/dashboard/summary", dashboardSummaryHandler(opts))
 	})
+
+	// /v2/* — 镜像反代
+	if opts.ProxyHandler != nil {
+		r.Handle("/v2", opts.ProxyHandler)
+		r.Handle("/v2/*", opts.ProxyHandler)
+	} else {
+		// 注入缺失：返回 503
+		r.Get("/v2", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusServiceUnavailable, "proxy_disabled", "registry proxy is not configured")
+		})
+		r.Get("/v2/*", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusServiceUnavailable, "proxy_disabled", "registry proxy is not configured")
+		})
+	}
 
 	// 兜底 404。
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
