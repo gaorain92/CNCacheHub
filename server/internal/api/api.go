@@ -76,6 +76,10 @@ type Options struct {
 	GetDashboardSummary func(ctx context.Context) (DashboardSummary, error)
 	// GetAccessLogs 分页查询 request_logs。
 	GetAccessLogs func(ctx context.Context, page, pageSize int) ([]AccessLogRecord, int, error)
+	// GetCacheEntries 分页查询 cache_entries。
+	GetCacheEntries func(ctx context.Context, page, pageSize int, query string) ([]CacheEntry, int, error)
+	// DeleteCacheEntry 按 id 删除（DB 行 + 调用方负责删 blob 文件）。
+	DeleteCacheEntry func(ctx context.Context, id int64) error
 }
 
 // Upstream 是 /api/docker/upstreams 返回的列表项。
@@ -91,6 +95,8 @@ type Upstream struct {
 type DashboardSummary struct {
 	CacheEntries    int   `json:"cacheEntries"`
 	CacheBytes      int64 `json:"cacheBytes"`
+	CacheHits       int64 `json:"cacheHits"`
+	BypassedCount   int   `json:"bypassedCount"`
 	HitCount        int64 `json:"hitCount"`
 	MissCount       int64 `json:"missCount"`
 	RequestCount24h int   `json:"requestCount24h"`
@@ -98,6 +104,22 @@ type DashboardSummary struct {
 	BytesOut24h     int64 `json:"bytesOut24h"`
 	ActiveUpstreams int   `json:"activeUpstreams"`
 	GeneratedAt     int64 `json:"generatedAt"`
+}
+
+// CacheEntry 是 /api/cache/entries 列表项。
+type CacheEntry struct {
+	ID           int64  `json:"id"`
+	Registry     string `json:"registry"`
+	Repository   string `json:"repository"`
+	Digest       string `json:"digest"`
+	MediaType    string `json:"mediaType"`
+	SizeBytes    int64  `json:"sizeBytes"`
+	StoragePath  string `json:"storagePath"`
+	HitCount     int    `json:"hitCount"`
+	LastAccessAt int64  `json:"lastAccessAt"`
+	CreatedAt    int64  `json:"createdAt"`
+	Bypassed     bool   `json:"bypassed"`
+	BypassReason string `json:"bypassReason"`
 }
 
 // NewRouter 构造配置好的 chi 路由。
@@ -124,6 +146,7 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/docker/upstreams", upstreamsHandler(opts))
 		r.Get("/docker/daemon.json", daemonJSONHandler(opts))
 		r.Get("/cache/entries", cacheEntriesHandler(opts))
+		r.Delete("/cache/entries/{id}", cacheDeleteHandler(opts))
 		r.Get("/logs", accessLogsHandler(opts))
 		r.Get("/dashboard/summary", dashboardSummaryHandler(opts))
 	})

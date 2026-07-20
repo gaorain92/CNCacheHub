@@ -1,20 +1,177 @@
 <script setup lang="ts">
-import { DataLine } from '@element-plus/icons-vue'
+import { computed, onMounted } from 'vue'
+import { DataLine, Delete, Search } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useCacheStore } from '@/stores/cache'
+
+const cache = useCacheStore()
+
+const totalPages = computed(() => Math.max(1, Math.ceil(cache.total / cache.pageSize)))
+
+onMounted(() => {
+  if (cache.items.length === 0) cache.fetch()
+})
+
+function shortDigest(d: string): string {
+  if (d.length <= 20) return d
+  return d.slice(0, 7) + '…' + d.slice(-12)
+}
+
+function formatTime(ts: number): string {
+  if (!ts) return '—'
+  return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+async function handleDelete(entry: { id: number; repository: string; digest: string }): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除缓存条目？\n\n${entry.repository}\n${entry.digest}\n\n此操作不可撤销。`,
+      '确认删除',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  const ok = await cache.remove(entry.id)
+  if (ok) {
+    ElMessage.success('已删除')
+  } else {
+    ElMessage.error(`删除失败：${cache.errorMessage}`)
+  }
+}
+
+function onSearch(q: string): void {
+  cache.setQuery(q.trim())
+}
 </script>
 
 <template>
-  <section class="soft rounded-[2rem] p-8">
-    <div class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><DataLine /></el-icon>
+  <section class="space-y-6">
+    <header class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
+          <el-icon :size="22" color="#020617"><DataLine /></el-icon>
+        </div>
+        <div>
+          <h2 class="text-2xl font-semibold">缓存管理</h2>
+          <p class="text-sm text-slate-400">共 {{ cache.total }} 条 · 本页 {{ cache.items.length }} 条</p>
+        </div>
       </div>
-      <div>
-        <h2 class="text-2xl font-semibold">缓存管理</h2>
-        <p class="text-sm text-slate-400">查看缓存占用、清理候选、定时清理与小容量 VPS 优化。</p>
+      <div class="flex items-center gap-2">
+        <el-input
+          :model-value="cache.query"
+          placeholder="搜索 repo / digest / registry"
+          clearable
+          style="width: 260px"
+          @keyup.enter="(e: KeyboardEvent) => onSearch((e.target as HTMLInputElement).value)"
+          @clear="onSearch('')"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-button @click="cache.fetch()">刷新</el-button>
+      </div>
+    </header>
+
+    <div v-if="cache.errorMessage" class="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-300">
+      {{ cache.errorMessage }}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
+        <div class="text-xs text-slate-500 mb-2">本页占用</div>
+        <div class="text-2xl font-semibold text-slate-100">{{ formatBytes(cache.totalBytes) }}</div>
+        <div class="text-xs text-slate-500 mt-2">{{ cache.items.length }} 个条目</div>
+      </div>
+      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
+        <div class="text-xs text-slate-500 mb-2">本页总命中</div>
+        <div class="text-2xl font-semibold text-slate-100">{{ cache.totalHits }}</div>
+        <div class="text-xs text-slate-500 mt-2">hit_count 累计</div>
+      </div>
+      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
+        <div class="text-xs text-slate-500 mb-2">总条数</div>
+        <div class="text-2xl font-semibold text-slate-100">{{ cache.total }}</div>
+        <div class="text-xs text-slate-500 mt-2">按 last_access 倒序</div>
       </div>
     </div>
-    <div class="mt-6 rounded-3xl border border-white/[.08] bg-black/20 p-6 text-sm text-slate-300">
-      Phase 0 占位 · 待 Phase 2 接入缓存条目可视化与清理任务。
+
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="text-xs text-slate-500 border-b border-white/[.06]">
+          <tr>
+            <th class="text-left px-4 py-3 font-medium">ID</th>
+            <th class="text-left px-4 py-3 font-medium">Registry</th>
+            <th class="text-left px-4 py-3 font-medium">Repository</th>
+            <th class="text-left px-4 py-3 font-medium">Digest</th>
+            <th class="text-right px-4 py-3 font-medium">大小</th>
+            <th class="text-right px-4 py-3 font-medium">命中</th>
+            <th class="text-left px-4 py-3 font-medium">最近访问</th>
+            <th class="text-left px-4 py-3 font-medium">状态</th>
+            <th class="text-right px-4 py-3 font-medium">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="e in cache.items"
+            :key="e.id"
+            class="border-b border-white/[.04] hover:bg-white/[.02]"
+          >
+            <td class="px-4 py-2 text-xs text-slate-500 font-mono">#{{ e.id }}</td>
+            <td class="px-4 py-2">
+              <el-tag size="small" effect="plain">{{ e.registry }}</el-tag>
+            </td>
+            <td class="px-4 py-2 text-sm text-slate-200">{{ e.repository }}</td>
+            <td class="px-4 py-2 font-mono text-xs text-slate-400" :title="e.digest">
+              {{ shortDigest(e.digest) }}
+            </td>
+            <td class="px-4 py-2 text-right text-xs text-slate-400 font-mono">
+              {{ formatBytes(e.sizeBytes) }}
+            </td>
+            <td class="px-4 py-2 text-right text-xs text-slate-300 font-mono">
+              {{ e.hitCount }}
+            </td>
+            <td class="px-4 py-2 text-xs text-slate-500 font-mono">{{ formatTime(e.lastAccessAt) }}</td>
+            <td class="px-4 py-2">
+              <el-tag v-if="e.bypassed" type="warning" size="small">
+                BYPASS · {{ e.bypassReason }}
+              </el-tag>
+              <el-tag v-else type="success" size="small">CACHED</el-tag>
+            </td>
+            <td class="px-4 py-2 text-right">
+              <el-button
+                :icon="Delete"
+                size="small"
+                type="danger"
+                plain
+                @click="handleDelete(e)"
+              >
+                删除
+              </el-button>
+            </td>
+          </tr>
+          <tr v-if="!cache.loading && cache.items.length === 0">
+            <td colspan="9" class="text-center text-slate-500 py-8 text-sm">暂无缓存条目</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-if="totalPages > 1" class="flex items-center justify-center">
+      <el-pagination
+        v-model:current-page="cache.page"
+        :total="cache.total"
+        :page-size="cache.pageSize"
+        layout="prev, pager, next, total"
+        @current-change="(p: number) => cache.setPage(p)"
+      />
     </div>
   </section>
 </template>

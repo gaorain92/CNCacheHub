@@ -28,8 +28,10 @@ type AccessLogRecord struct {
 type DashboardSummary struct {
 	CacheEntries     int   `json:"cacheEntries"`
 	CacheBytes       int64 `json:"cacheBytes"`
-	HitCount         int64 `json:"hitCount"`
-	MissCount        int64 `json:"missCount"`
+	CacheHits        int64 `json:"cacheHits"`        // 总命中次数（sum of hit_count）
+	BypassedCount    int   `json:"bypassedCount"`   // 旁路条目数
+	HitCount         int64 `json:"hitCount"`        // 24h 命中（request_logs）
+	MissCount        int64 `json:"missCount"`       // 24h 未命中
 	RequestCount24h  int   `json:"requestCount24h"`
 	ErrorCount24h    int   `json:"errorCount24h"`
 	BytesOut24h      int64 `json:"bytesOut24h"`
@@ -118,10 +120,16 @@ func (d *DB) DashboardSummary(ctx context.Context) (DashboardSummary, error) {
 	s.GeneratedAt = time.Now().Unix()
 	cutoff := time.Now().Add(-24 * time.Hour).Unix()
 
-	// 缓存条数 / 占用字节 / 命中 / 未命中
-	if err := d.SQLDB.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&s.CacheEntries, &s.CacheBytes); err != nil {
-		return s, fmt.Errorf("storage: count cache: %w", err)
+	// 缓存聚合（来自 cache_entries）
+	if err := d.SQLDB.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(size_bytes), 0),
+			COALESCE(SUM(hit_count), 0),
+			COALESCE(SUM(CASE WHEN bypassed = 1 THEN 1 ELSE 0 END), 0)
+		FROM cache_entries
+	`).Scan(&s.CacheEntries, &s.CacheBytes, &s.CacheHits, &s.BypassedCount); err != nil {
+		return s, fmt.Errorf("storage: cache aggregate: %w", err)
 	}
 
 	// 24h 请求量 / 错误数 / 流量

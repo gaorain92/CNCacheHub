@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // upstreamsHandler GET /api/docker/upstreams
@@ -80,12 +82,52 @@ func daemonJSONHandler(opts Options) http.HandlerFunc {
 	}
 }
 
-// cacheEntriesHandler GET /api/cache/entries
-//
-// Phase 1 stub：返回 503 + 待实现提示（真实分页/删除留给 Phase 1.2）。
+// cacheEntriesHandler GET /api/cache/entries?page=1&pageSize=20&q=nginx
 func cacheEntriesHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotImplemented, "not_implemented", "cache entries listing arrives in Phase 1.2")
+		if opts.GetCacheEntries == nil {
+			writeError(w, http.StatusServiceUnavailable, "cache_unavailable", "cache not configured")
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		query := r.URL.Query().Get("q")
+		items, total, err := opts.GetCacheEntries(r.Context(), page, pageSize, query)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "cache_query_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":    items,
+			"total":    total,
+			"page":     page,
+			"pageSize": pageSize,
+		})
+	}
+}
+
+// cacheDeleteHandler DELETE /api/cache/entries/:id
+func cacheDeleteHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.DeleteCacheEntry == nil {
+			writeError(w, http.StatusServiceUnavailable, "cache_unavailable", "cache not configured")
+			return
+		}
+		// chi.URLParam 拿 :id
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
+			return
+		}
+		if err := opts.DeleteCacheEntry(r.Context(), id); err != nil {
+			writeError(w, http.StatusInternalServerError, "cache_delete_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":      id,
+			"deleted": true,
+		})
 	}
 }
 

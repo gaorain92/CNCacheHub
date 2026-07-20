@@ -96,7 +96,7 @@ async function refresh(): Promise<void> {
           {{ dashboard.hitRate.toFixed(1) }}%
         </div>
         <div class="text-xs text-slate-500 mt-2">
-          hit {{ dashboard.data?.hitCount ?? 0 }} · miss {{ dashboard.data?.missCount ?? 0 }}
+          hit {{ dashboard.data?.hitCount ?? 0 }} · miss {{ dashboard.data?.missCount ?? 0 }} · 总命中 {{ dashboard.data?.cacheHits ?? 0 }}
         </div>
       </div>
 

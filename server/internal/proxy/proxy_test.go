@@ -39,7 +39,7 @@ func newTestProxy(t *testing.T, upHandler http.HandlerFunc) (*Proxy, *httptest.S
 	}
 	c := newTestCache(t)
 	accessLog := make(chan AccessLog, 100)
-	p := New(c, u, accessLog)
+	p := New(c, u, accessLog, nil) // 测试不写元数据
 	return p, up
 }
 

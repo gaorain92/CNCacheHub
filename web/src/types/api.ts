@@ -2,10 +2,6 @@
 // 命名风格：与 Go 后端 JSON tag（camelCase）保持一致
 // 字段尽量保持可选，避免在版本演进时阻塞前端
 
-/**
- * GET /api/healthz
- * 后端至少返回 { status: "ok" }，其它字段为可选扩展
- */
 export interface HealthResponse {
   status: string
   uptime?: string
@@ -13,10 +9,6 @@ export interface HealthResponse {
   version?: string
 }
 
-/**
- * GET /api/version
- * 返回后端元信息
- */
 export interface VersionResponse {
   name: string
   version: string
@@ -28,10 +20,6 @@ export interface VersionResponse {
 // Phase 1 — Docker pull-through cache
 // ====================================================================
 
-/**
- * GET /api/docker/upstreams
- * 单条 upstream 配置
- */
 export interface Upstream {
   id: number
   name: string
@@ -45,12 +33,11 @@ export interface UpstreamsResponse {
   total: number
 }
 
-/**
- * GET /api/dashboard/summary
- */
 export interface DashboardSummary {
   cacheEntries: number
   cacheBytes: number
+  cacheHits: number
+  bypassedCount: number
   hitCount: number
   missCount: number
   requestCount24h: number
@@ -60,10 +47,6 @@ export interface DashboardSummary {
   generatedAt: number
 }
 
-/**
- * GET /api/logs
- * 单条 access log
- */
 export interface AccessLogItem {
   method: string
   path: string
@@ -78,6 +61,28 @@ export interface AccessLogItem {
 
 export interface AccessLogsResponse {
   items: AccessLogItem[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface CacheEntry {
+  id: number
+  registry: string
+  repository: string
+  digest: string
+  mediaType: string
+  sizeBytes: number
+  storagePath: string
+  hitCount: number
+  lastAccessAt: number
+  createdAt: number
+  bypassed: boolean
+  bypassReason: string
+}
+
+export interface CacheEntriesResponse {
+  items: CacheEntry[]
   total: number
   page: number
   pageSize: number

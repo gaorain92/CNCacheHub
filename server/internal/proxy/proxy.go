@@ -13,6 +13,7 @@ import (
 
 	"github.com/cncachehub/server/internal/cache"
 	logpkg "github.com/cncachehub/server/internal/log"
+	"github.com/cncachehub/server/internal/storage"
 )
 
 // Proxy 持有缓存 + 上游 + 日志依赖，实现 http.Handler。
@@ -23,15 +24,28 @@ type Proxy struct {
 	Upstream  *Upstream
 	AccessLog chan<- AccessLog // 注入：非 nil 时异步记日志
 	Logger    *slog.Logger
+
+	// MetaWriter 写 cache_entries 元数据（可选；nil 时不写）。
+	// 接口而非 *storage.DB，避免 proxy → storage 反向依赖。
+	MetaWriter MetaWriter
+}
+
+// MetaWriter 接口：proxy 写元数据的最小集。
+//
+// 实际实现是 *storage.DB 适配的闭包（main.go 注入）。
+type MetaWriter interface {
+	UpsertCacheEntry(ctx context.Context, e storage.CacheEntry) (int64, error)
+	TouchCacheEntry(ctx context.Context, registry, repo, digest string) error
 }
 
 // New 构造 Proxy。
-func New(c cache.Store, u *Upstream, accessLog chan<- AccessLog) *Proxy {
+func New(c cache.Store, u *Upstream, accessLog chan<- AccessLog, meta MetaWriter) *Proxy {
 	return &Proxy{
 		Cache:     c,
 		Upstream:  u,
 		AccessLog: accessLog,
 		Logger:    logpkg.L(),
+		MetaWriter: meta,
 	}
 }
 
@@ -181,6 +195,10 @@ func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.R
 				entry.Status = http.StatusOK
 				entry.Cached = true
 				entry.Bytes = n
+				// 命中：touch 元数据（last_access + hit_count++）
+				if p.MetaWriter != nil {
+					_ = p.MetaWriter.TouchCacheEntry(ctx, registry, name, digest)
+				}
 				return
 			}
 			_ = size
@@ -316,10 +334,41 @@ func (p *Proxy) fetchAndCache(
 		w.Header().Set("X-CNCacheHub-Bypass", string(sw.BypassReason()))
 	}
 
+	// 写 cache_entries 元数据。bypassed 也写（dashboard 区分统计）。
+	// Close 失败时不写（数据可能不完整）。
+	//
+	// 重要：r.Context() 会在 client 断开时 cancel（docker daemon 拉完一个 blob 就 close 连接），
+	// 所以这里用 Background context 派生一个 5s 超时的 ctx。
+	upsertCtx, upsertCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer upsertCancel()
+	if p.MetaWriter != nil && closeErr == nil {
+		_, _ = p.MetaWriter.UpsertCacheEntry(upsertCtx, storage.CacheEntry{
+			Registry:     registry,
+			Repository:   name,
+			Digest:       digest,
+			MediaType:    mediaType,
+			SizeBytes:     sw.Written(),
+			StoragePath:  relativeStoragePath(registry, name, digest),
+			Bypassed:     sw.Bypassed(),
+			BypassReason: string(sw.BypassReason()),
+		})
+	}
+
 	if copyErr != nil {
 		return resp.StatusCode, n, sw.BypassReason(), copyErr
 	}
 	return resp.StatusCode, n, sw.BypassReason(), nil
+}
+
+// relativeStoragePath 生成相对 cache 根的路径（与 cache.FileStore.blobPath 一致）。
+func relativeStoragePath(registry, repo, digest string) string {
+	// 简化：与 cache.safeRel 镜像但 inline 避免 import。
+	// 安全：registry 不含 /，repo 可含 /，digest 校验。
+	// 失败时回退到空字符串，UI 仍然能显示。
+	if digest == "" {
+		return ""
+	}
+	return "v2/" + registry + "/" + repo + "/blobs/" + digest
 }
 
 // safeMultiWriter 是 io.multiWriter 的扩展：任一 writer 出错不互不影响。

@@ -109,7 +109,9 @@ func run() error {
 
 	// access log channel：proxy 写，主 goroutine 消费 + 落 DB。
 	accessLogCh := make(chan proxy.AccessLog, 1000)
-	proxyHandler := proxy.New(fs, up, accessLogCh)
+	// metaWriter adapter：proxy.MetaWriter 接口 → storage.DB。
+	metaAdapter := &metaWriterAdapter{db: db}
+	proxyHandler := proxy.New(fs, up, accessLogCh, metaAdapter)
 	logpkg.Info("proxy ready", "upstream", cfg.UpstreamRegistry)
 
 	// 5. 启 access log consumer goroutine。
@@ -131,6 +133,8 @@ func run() error {
 		GetUpstreams:        makeUpstreamsAdapter(db),
 		GetDashboardSummary: makeDashboardAdapter(db),
 		GetAccessLogs:       makeListAccessLogsAdapter(db),
+		GetCacheEntries:     makeListCacheEntriesAdapter(db, fs),
+		DeleteCacheEntry:    makeDeleteCacheEntryAdapter(db, fs),
 	})
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -251,6 +255,19 @@ func proxyToStorageRec(rec proxy.AccessLog) storage.AccessLogRecord {
 	}
 }
 
+// metaWriterAdapter 把 proxy.MetaWriter 接口适配到 storage.DB。
+type metaWriterAdapter struct {
+	db *storage.DB
+}
+
+func (m *metaWriterAdapter) UpsertCacheEntry(ctx context.Context, e storage.CacheEntry) (int64, error) {
+	return m.db.UpsertCacheEntry(ctx, e)
+}
+
+func (m *metaWriterAdapter) TouchCacheEntry(ctx context.Context, registry, repo, digest string) error {
+	return m.db.TouchCacheEntry(ctx, registry, repo, digest)
+}
+
 // accessLogBridge 把 api.AccessLogRecord 写入 storage。
 //
 // 实际不会调用（因为 access log 由 proxy 直接发给 main 的 consumer），
@@ -305,6 +322,8 @@ func makeDashboardAdapter(db *storage.DB) func(ctx context.Context) (api.Dashboa
 		return api.DashboardSummary{
 			CacheEntries:    s.CacheEntries,
 			CacheBytes:      s.CacheBytes,
+			CacheHits:       s.CacheHits,
+			BypassedCount:   s.BypassedCount,
 			HitCount:        s.HitCount,
 			MissCount:       s.MissCount,
 			RequestCount24h: s.RequestCount24h,
@@ -313,6 +332,50 @@ func makeDashboardAdapter(db *storage.DB) func(ctx context.Context) (api.Dashboa
 			ActiveUpstreams: s.ActiveUpstreams,
 			GeneratedAt:     s.GeneratedAt,
 		}, nil
+	}
+}
+
+// makeListCacheEntriesAdapter 包装 storage.ListCacheEntries → api 列表。
+func makeListCacheEntriesAdapter(db *storage.DB, fs cache.Store) func(ctx context.Context, page, pageSize int, query string) ([]api.CacheEntry, int, error) {
+	return func(ctx context.Context, page, pageSize int, query string) ([]api.CacheEntry, int, error) {
+		rows, total, err := db.ListCacheEntries(ctx, page, pageSize, query)
+		if err != nil {
+			return nil, 0, err
+		}
+		out := make([]api.CacheEntry, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, api.CacheEntry{
+				ID:           r.ID,
+				Registry:     r.Registry,
+				Repository:   r.Repository,
+				Digest:       r.Digest,
+				MediaType:    r.MediaType,
+				SizeBytes:    r.SizeBytes,
+				StoragePath:  r.StoragePath,
+				HitCount:     r.HitCount,
+				LastAccessAt: r.LastAccessAt,
+				CreatedAt:    r.CreatedAt,
+				Bypassed:     r.Bypassed,
+				BypassReason: r.BypassReason,
+			})
+		}
+		return out, total, nil
+	}
+}
+
+// makeDeleteCacheEntryAdapter 删 DB 行 + 调 cache.Store.Delete 删文件。
+func makeDeleteCacheEntryAdapter(db *storage.DB, fs cache.Store) func(ctx context.Context, id int64) error {
+	return func(ctx context.Context, id int64) error {
+		// 先取 entry 拿到 storage_path 三元组，再删文件 + 删行
+		e, err := db.GetCacheEntryByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := fs.Delete(e.Registry, e.Repository, e.Digest); err != nil {
+			logpkg.Warn("delete cache blob file failed", "err", err.Error(), "id", id)
+			// 文件不存在不阻断（DB 行才是 source of truth）
+		}
+		return db.DeleteCacheEntry(ctx, id)
 	}
 }
 
