@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Lightning, MagicStick, Search } from '@element-plus/icons-vue'
+import { ArrowDown, Lightning, MagicStick, Search, SwitchButton, User } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import StatusDot from './StatusDot.vue'
 import { useHealthStore } from '@/stores/health'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 
 const health = useHealthStore()
+const auth = useAuthStore()
 
 const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? 'CNCacheHub')
 
@@ -28,6 +31,21 @@ function goDiagnostics(): void {
 
 function goClients(): void {
   router.push('/clients')
+}
+
+async function handleLogout(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('确定要登出当前账号吗？', '登出确认', {
+      type: 'warning',
+      confirmButtonText: '登出',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  await auth.logout()
+  ElMessage.success('已登出')
+  router.replace('/login')
 }
 </script>
 
@@ -71,6 +89,33 @@ function goClients(): void {
         <el-icon :size="14"><MagicStick /></el-icon>
         生成配置
       </button>
+
+      <!-- 用户菜单 -->
+      <el-dropdown trigger="click" @command="(c: string) => c === 'logout' && handleLogout()">
+        <button
+          type="button"
+          class="btn rounded-2xl bg-white/[.06] px-3 py-2 text-sm hover:bg-white/[.10] transition flex items-center gap-2"
+        >
+          <div class="h-7 w-7 rounded-full bg-gradient-to-br from-mint to-violet flex items-center justify-center text-xs font-bold text-ink">
+            <el-icon :size="14"><User /></el-icon>
+          </div>
+          <span class="text-slate-200">{{ auth.username }}</span>
+          <el-icon :size="12" class="text-slate-500"><ArrowDown /></el-icon>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item disabled>
+              <span class="text-xs text-slate-500">
+                {{ auth.user?.isAdmin ? '管理员' : '普通用户' }} · {{ auth.username }}
+              </span>
+            </el-dropdown-item>
+            <el-dropdown-item divided command="logout">
+              <el-icon :size="14"><SwitchButton /></el-icon>
+              登出
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </header>
 </template>

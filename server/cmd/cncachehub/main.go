@@ -11,9 +11,11 @@
 //
 // 不做的事（明确边界）：
 //   - 不做 Www-Authenticate token dance（Phase 1.1）；
-//   - 不做鉴权 / 登录；
-//   - 不做预热 / 清理 / 通知；
+//   - 不做预热 / 通知；
 //   - 不 panic 处理运行时错误（任何失败都返回 error 并优雅退出）。
+//
+// 已做：
+//   - 控制台登录（PRD §9.7.1）：cookie session + bcrypt + 审计日志。
 package main
 
 import (
@@ -124,6 +126,18 @@ func run() error {
 	// 5c. 启 upstream health checker（每 60s 探一次，缓存在内存里给 /api/health/upstream 读）。
 	upstreamHealth := startUpstreamHealthChecker(rootCtx, cfg.UpstreamRegistry)
 
+	// 5d. 启 session cleanup goroutine（每小时清过期 session）。
+	go runSessionCleanup(rootCtx, db)
+
+	// 5e. 检查是否首次启动（无 admin），提醒用户初始化。
+	if n, _ := db.CountUsers(rootCtx); n == 0 {
+		logpkg.Warn("no admin user — visit /login to run initialization wizard",
+			"hint", "GET /api/auth/init-status, then POST /api/auth/init",
+		)
+	} else {
+		logpkg.Info("admin users present", "count", n)
+	}
+
 	// 6. 构造 HTTP server。
 	build := api.BuildInfo{
 		Name:    "cncachehub",
@@ -145,6 +159,7 @@ func run() error {
 		ListCleanupTasks:    makeListCleanupTasksAdapter(db),
 		RunCleanupTask:      makeRunCleanupTaskAdapter(db, fs),
 		GetUpstreamHealth:   makeGetUpstreamHealthAdapter(upstreamHealth),
+		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
 	})
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -514,6 +529,27 @@ type UpstreamHealthSnapshot struct {
 	LatencyMs   int64  `json:"latencyMs"`
 	Error       string `json:"error,omitempty"`
 	LastChecked int64  `json:"lastChecked"`
+}
+
+// runSessionCleanup 定期清过期 session（每小时一次）。
+func runSessionCleanup(ctx context.Context, db *storage.DB) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := db.PurgeExpiredSessions(ctx)
+			if err != nil {
+				logpkg.Warn("purge expired sessions", "err", err.Error())
+				continue
+			}
+			if n > 0 {
+				logpkg.Info("purged expired sessions", "count", n)
+			}
+		}
+	}
 }
 
 // startUpstreamHealthChecker 启 goroutine 每 60s 探一次上游 registry。

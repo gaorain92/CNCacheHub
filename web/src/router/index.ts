@@ -1,9 +1,22 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
     redirect: '/dashboard',
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/LoginView.vue'),
+    meta: { title: '登录', public: true },
+  },
+  {
+    path: '/init',
+    name: 'init',
+    component: () => import('@/views/InitView.vue'),
+    meta: { title: '初始化', public: true, initOnly: true },
   },
   {
     path: '/dashboard',
@@ -57,7 +70,7 @@ const routes: RouteRecordRaw[] = [
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),
-    meta: { title: '页面未找到' },
+    meta: { title: '页面未找到', public: true },
   },
 ]
 
@@ -73,6 +86,40 @@ const router = createRouter({
 router.afterEach((to) => {
   const title = (to.meta?.title as string | undefined) ?? ''
   document.title = title ? `${title} · CNCacheHub` : 'CNCacheHub 控制台'
+})
+
+// 全局守卫：未登录 → /login；已登录访问 /login → /dashboard；
+// 未初始化访问受保护路由 → /init；已初始化访问 /init → /login。
+router.beforeEach(async (to) => {
+  const auth = useAuthStore()
+  // 首次进任意路由时拉一次 init 状态
+  if (auth.user === null && !auth.initialized && !auth.loading) {
+    await auth.bootstrap()
+  }
+
+  // 公开路由直接放行
+  if (to.meta?.public) {
+    // 已登录访问 /login → 跳 dashboard
+    if (to.path === '/login' && auth.isAuthenticated) {
+      return { path: '/dashboard' }
+    }
+    return true
+  }
+
+  // /init 路由：仅在未初始化时可访问
+  if (to.path === '/init') {
+    if (auth.initialized) {
+      return { path: '/login' }
+    }
+    return true
+  }
+
+  // 受保护路由：未登录 → /login
+  if (!auth.isAuthenticated) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
+  return true
 })
 
 export default router

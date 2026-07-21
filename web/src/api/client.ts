@@ -13,6 +13,12 @@ export const api: AxiosInstance = axios.create({
   },
 })
 
+// 401 全局回调（由 main.ts / store 注册，避免循环 import）
+let onUnauthorized: (() => void) | null = null
+export function setOnUnauthorized(fn: (() => void) | null): void {
+  onUnauthorized = fn
+}
+
 // 4xx / 5xx / 网络错误统一转成有 code + message 的 Error
 api.interceptors.response.use(
   (response) => response,
@@ -26,6 +32,15 @@ api.interceptors.response.use(
       data?.error?.message ??
       error.message ??
       '请求失败，请稍后重试'
+
+    // 401 → 触发全局跳登录（除 /api/auth/login 自身外）
+    if (status === 401 && onUnauthorized && !error.config?.url?.includes('/auth/login')) {
+      try {
+        onUnauthorized()
+      } catch {
+        // ignore
+      }
+    }
 
     const wrapped = new Error(message) as Error & { code: string; status?: number }
     wrapped.code = code

@@ -86,6 +86,8 @@ type Options struct {
 	RunCleanupTask func(ctx context.Context, id int64) (CleanupReport, error)
 	// GetUpstreamHealth 拿上游连通性快照。
 	GetUpstreamHealth func() UpstreamHealth
+	// AuthDB 鉴权后端（PRD §9.7.1）。nil 时不要求登录（开发模式）。
+	AuthDB AuthDB
 }
 
 // Upstream 是 /api/docker/upstreams 返回的列表项。
@@ -181,12 +183,24 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(loggerMiddleware())
 	r.Use(chimw.Recoverer)
 	r.Use(jsonContentTypeMiddleware())
+	// 鉴权放在最后（在 logger 后），这样 401 也会被 logger 记录。
+	r.Use(requireAuth(opts))
 
 	// 健康检查（同时挂在 / 与 /api 下）。
 	r.Get("/healthz", rootHealthHandler())
 	r.Route("/api", func(r chi.Router) {
+		// 公开
 		r.Get("/healthz", apiHealthHandler(opts))
 		r.Get("/version", versionHandler(opts.Build))
+		r.Route("/auth", func(r chi.Router) {
+			r.Get("/init-status", initStatusHandler(opts))
+			r.Post("/init", initHandler(opts))
+			r.Post("/login", loginHandler(opts))
+			r.Post("/logout", logoutHandler(opts))
+			r.Get("/me", meHandler(opts))
+			r.Post("/change-password", changePasswordHandler(opts))
+		})
+		// 受保护（requireAuth 拦截）
 		r.Get("/docker/upstreams", upstreamsHandler(opts))
 		r.Get("/docker/daemon.json", daemonJSONHandler(opts))
 		r.Get("/cache/entries", cacheEntriesHandler(opts))
