@@ -96,7 +96,9 @@ type CleanupReport struct {
 // 删除顺序：先按 last_access_at ASC（最旧）选最多 batchSize 条；循环直到没更多。
 //
 // 文件删除由调用方负责（本函数只删 DB 行；Proxy 层可以 batch 删文件）。
-func (d *DB) RunLRU(ctx context.Context, taskID int64, thresholdSeconds int, batchSize int) (CleanupReport, error) {
+//
+// dryRun=true 时只算 freed_count/freed_bytes，不真删；返回与实际跑一样的 report。
+func (d *DB) RunLRU(ctx context.Context, taskID int64, thresholdSeconds int, batchSize int, dryRun bool) (CleanupReport, error) {
 	if batchSize <= 0 {
 		batchSize = 200
 	}
@@ -109,7 +111,12 @@ func (d *DB) RunLRU(ctx context.Context, taskID int64, thresholdSeconds int, bat
 	}
 
 	start := time.Now()
-	for {
+	// dry-run 只跑一次（不删行，循环没意义，会无限选同样行）。
+	maxIters := 1
+	if !dryRun {
+		maxIters = 1000 // 兜底，防止异常情况下死循环
+	}
+	for iter := 0; iter < maxIters; iter++ {
 		// 用子事务避免长 lock
 		rows, err := d.SQLDB.QueryContext(ctx, `
 			SELECT id, registry, repository, digest, size_bytes
@@ -146,24 +153,30 @@ func (d *DB) RunLRU(ctx context.Context, taskID int64, thresholdSeconds int, bat
 		}
 
 		for _, b := range batch {
-			if _, err := d.SQLDB.ExecContext(ctx, `DELETE FROM cache_entries WHERE id = ?`, b.id); err != nil {
-				return report, err
+			if !dryRun {
+				if _, err := d.SQLDB.ExecContext(ctx, `DELETE FROM cache_entries WHERE id = ?`, b.id); err != nil {
+					return report, err
+				}
 			}
 			report.FreedCount++
 			report.FreedBytes += b.size
 		}
 	}
 
-	// 结束状态
-	if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&report.AfterCount, &report.AfterBytes); err != nil {
-		return report, err
+	// 结束状态（dry-run 时等于 before）
+	report.AfterCount = report.BeforeCount - report.FreedCount
+	report.AfterBytes = report.BeforeBytes - report.FreedBytes
+	if !dryRun {
+		if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&report.AfterCount, &report.AfterBytes); err != nil {
+			return report, err
+		}
 	}
 	report.DurationMs = time.Since(start).Milliseconds()
 	return report, nil
 }
 
 // RunCapacity 删到 cache 总量 ≤ thresholdBytes（按 last_access_at ASC 先删最旧）。
-func (d *DB) RunCapacity(ctx context.Context, taskID int64, thresholdBytes int64, batchSize int) (CleanupReport, error) {
+func (d *DB) RunCapacity(ctx context.Context, taskID int64, thresholdBytes int64, batchSize int, dryRun bool) (CleanupReport, error) {
 	if batchSize <= 0 {
 		batchSize = 200
 	}
@@ -174,7 +187,11 @@ func (d *DB) RunCapacity(ctx context.Context, taskID int64, thresholdBytes int64
 	}
 
 	start := time.Now()
-	for {
+	maxIters := 1
+	if !dryRun {
+		maxIters = 1000
+	}
+	for iter := 0; iter < maxIters; iter++ {
 		// 查当前总量
 		var total int64
 		if err := d.SQLDB.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&total); err != nil {
@@ -217,17 +234,23 @@ func (d *DB) RunCapacity(ctx context.Context, taskID int64, thresholdBytes int64
 			break
 		}
 		for _, b := range batch {
-			if _, err := d.SQLDB.ExecContext(ctx, `DELETE FROM cache_entries WHERE id = ?`, b.id); err != nil {
-				return report, err
+			if !dryRun {
+				if _, err := d.SQLDB.ExecContext(ctx, `DELETE FROM cache_entries WHERE id = ?`, b.id); err != nil {
+					return report, err
+				}
 			}
 			report.FreedCount++
 			report.FreedBytes += b.size
 		}
-		// 如果一次没降到目标，循环
 	}
 
-	if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&report.AfterCount, &report.AfterBytes); err != nil {
-		return report, err
+	// 结束状态
+	report.AfterCount = report.BeforeCount - report.FreedCount
+	report.AfterBytes = report.BeforeBytes - report.FreedBytes
+	if !dryRun {
+		if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&report.AfterCount, &report.AfterBytes); err != nil {
+			return report, err
+		}
 	}
 	report.DurationMs = time.Since(start).Milliseconds()
 	return report, nil

@@ -66,6 +66,29 @@ export interface AccessLogsResponse {
   pageSize: number
 }
 
+// ============================================================================
+// System Settings
+// ============================================================================
+
+export interface SystemSettings {
+  smallVpsOpt: boolean
+  reserveSpaceGb: number
+  maxObjectSizeMb: number
+  cacheTotalGb: number
+  cleanupTriggerPct: number
+  cleanupTargetPct: number
+  updatedAt: number
+}
+
+export interface SettingsPatch {
+  smallVpsOpt?: boolean
+  reserveSpaceGb?: number
+  maxObjectSizeMb?: number
+  cacheTotalGb?: number
+  cleanupTriggerPct?: number
+  cleanupTargetPct?: number
+}
+
 export interface CacheEntry {
   id: number
   registry: string

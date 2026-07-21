@@ -11,8 +11,18 @@ export async function getCleanupTasks(): Promise<CleanupTask[]> {
 
 /**
  * POST /api/cleanup/tasks/:id/run
+ * 实际跑（删文件 + 删 DB 行）。
  */
 export async function runCleanupTask(id: number): Promise<CleanupReport> {
   const { data } = await api.post<CleanupReport>(`/cleanup/tasks/${id}/run`)
+  return data
+}
+
+/**
+ * POST /api/cleanup/tasks/:id/dry-run
+ * 干跑（不删行、不删文件），返回预估 freed_count/freed_bytes（PRD §9.6.5）。
+ */
+export async function dryRunCleanupTask(id: number): Promise<CleanupReport> {
+  const { data } = await api.post<CleanupReport>(`/cleanup/tasks/${id}/dry-run`)
   return data
 }

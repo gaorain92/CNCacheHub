@@ -11,17 +11,19 @@ import (
 
 // AccessLogRecord 是单条 request_logs 行。
 type AccessLogRecord struct {
-	ID         int64  `json:"id"`
-	CreatedAt  int64  `json:"createdAt"` // unix 秒
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMs int64  `json:"durationMs"`
-	Cached     bool   `json:"cached"`
-	Bypassed   bool   `json:"bypassed"`
-	ClientIP   string `json:"clientIp"`
-	Bytes      int64  `json:"bytes"`
-	Error      string `json:"error"`
+	ID             int64  `json:"id"`
+	CreatedAt      int64  `json:"createdAt"` // unix 秒
+	Method         string `json:"method"`
+	Path           string `json:"path"`
+	Status         int    `json:"status"`
+	DurationMs     int64  `json:"durationMs"`
+	Cached         bool   `json:"cached"`
+	Bypassed       bool   `json:"bypassed"`
+	BypassedReason string `json:"-"` // 同 BypassReason；保留做兼容
+	BypassReason   string `json:"bypassReason"` // PRD §9.6.4: size_limit / disk_low
+	ClientIP       string `json:"clientIp"`
+	Bytes          int64  `json:"bytes"`
+	Error          string `json:"error"`
 }
 
 // DashboardSummary 是仪表盘聚合数据。
@@ -51,15 +53,23 @@ func (d *DB) InsertAccessLog(ctx context.Context, rec AccessLogRecord) error {
 	if rec.Cached {
 		cached = 1
 	}
+	// 同步 BypassedReason 字段（兼容旧 BypassedReason 命名）
+	if rec.BypassReason == "" && rec.BypassedReason != "" {
+		rec.BypassReason = rec.BypassedReason
+	}
+	// bool 兼容路径：Bypassed=true + BypassReason="" 视为 "bypassed"
+	if rec.Bypassed && rec.BypassReason == "" {
+		rec.BypassReason = "bypassed"
+	}
 	bypassed := 0
-	if rec.Bypassed {
+	if rec.BypassReason != "" {
 		bypassed = 1
 	}
 	_, err := d.SQLDB.ExecContext(ctx, `
 		INSERT INTO request_logs
-		(created_at, method, path, status, duration_ms, cached, bypassed, client_ip, bytes, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, ts, rec.Method, rec.Path, rec.Status, rec.DurationMs, cached, bypassed, rec.ClientIP, rec.Bytes, rec.Error)
+		(created_at, method, path, status, duration_ms, cached, bypassed, bypass_reason, client_ip, bytes, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, ts, rec.Method, rec.Path, rec.Status, rec.DurationMs, cached, bypassed, rec.BypassReason, rec.ClientIP, rec.Bytes, rec.Error)
 	if err != nil {
 		return fmt.Errorf("storage: insert access log: %w", err)
 	}
@@ -83,7 +93,7 @@ func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int) ([]AccessLo
 	}
 
 	rows, err := d.SQLDB.QueryContext(ctx, `
-		SELECT id, created_at, method, path, status, duration_ms, cached, bypassed, client_ip, bytes, error
+		SELECT id, created_at, method, path, status, duration_ms, cached, bypassed, bypass_reason, client_ip, bytes, error
 		FROM request_logs
 		ORDER BY id DESC
 		LIMIT ? OFFSET ?
@@ -101,11 +111,12 @@ func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int) ([]AccessLo
 			bypassed int
 		)
 		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Method, &r.Path, &r.Status,
-			&r.DurationMs, &cachedI, &bypassed, &r.ClientIP, &r.Bytes, &r.Error); err != nil {
+			&r.DurationMs, &cachedI, &bypassed, &r.BypassReason, &r.ClientIP, &r.Bytes, &r.Error); err != nil {
 			return nil, 0, fmt.Errorf("storage: scan log: %w", err)
 		}
 		r.Cached = cachedI == 1
 		r.Bypassed = bypassed == 1
+		r.BypassedReason = r.BypassReason
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

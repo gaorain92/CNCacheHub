@@ -96,7 +96,7 @@ func TestRunLRU_FreesOldEntries(t *testing.T) {
 	}
 
 	// threshold=60s → 2 条老条目该被删
-	report, err := db.RunLRU(ctx, 1, 60, 200)
+	report, err := db.RunLRU(ctx, 1, 60, 200, false)
 	if err != nil {
 		t.Fatalf("RunLRU: %v", err)
 	}
@@ -108,6 +108,79 @@ func TestRunLRU_FreesOldEntries(t *testing.T) {
 	}
 	if report.BeforeCount != 3 || report.AfterCount != 1 {
 		t.Errorf("BeforeCount/AfterCount = %d/%d, want 3/1", report.BeforeCount, report.AfterCount)
+	}
+}
+
+// TestRunLRU_DryRun 验证 dryRun=true 时算 freed 但不删。
+func TestRunLRU_DryRun(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	old := time.Now().Unix() - 3600
+	for i := 0; i < 3; i++ {
+		_, _ = db.UpsertCacheEntry(ctx, CacheEntry{
+			Registry:     "dockerhub",
+			Repository:   "library/dry",
+			Digest:       "sha256:00000000000000000000000000000000000000000000000000000000000000" + string(rune('a'+i)),
+			SizeBytes:    1024,
+			LastAccessAt: old,
+		})
+	}
+	rep, err := db.RunLRU(ctx, 1, 60, 200, true)
+	if err != nil {
+		t.Fatalf("RunLRU dry-run: %v", err)
+	}
+	if rep.FreedCount != 3 {
+		t.Errorf("FreedCount = %d, want 3", rep.FreedCount)
+	}
+	// 数据还在
+	var n int
+	_ = db.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_entries`).Scan(&n)
+	if n != 3 {
+		t.Errorf("after dry-run, count = %d, want 3 (no delete)", n)
+	}
+	// AfterBytes = BeforeBytes - FreedBytes
+	if rep.AfterBytes != rep.BeforeBytes-rep.FreedBytes {
+		t.Errorf("AfterBytes = %d, want %d", rep.AfterBytes, rep.BeforeBytes-rep.FreedBytes)
+	}
+}
+
+// TestRunCapacity_DryRun 验证 dry-run 干跑。
+func TestRunCapacity_DryRun(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	for i := 0; i < 3; i++ {
+		_, _ = db.UpsertCacheEntry(ctx, CacheEntry{
+			Registry:   "dockerhub",
+			Repository: "library/capdry",
+			Digest:     "sha256:11111111111111111111111111111111111111111111111111111111111111" + string(rune('a'+i)),
+			SizeBytes:  1024,
+		})
+	}
+	rep, err := db.RunCapacity(ctx, 2, 1024, 200, true)
+	if err != nil {
+		t.Fatalf("RunCapacity dry-run: %v", err)
+	}
+	// 3072 > 1024 → dry-run 模拟一遍 batch=200 全拿 3 条，freed=3
+	if rep.FreedCount != 3 {
+		t.Errorf("FreedCount = %d, want 3 (batch=200 一次全拿)", rep.FreedCount)
+	}
+	// 数据还在
+	var n int
+	_ = db.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_entries`).Scan(&n)
+	if n != 3 {
+		t.Errorf("after dry-run, count = %d, want 3 (no delete)", n)
 	}
 }
 
@@ -135,7 +208,7 @@ func TestRunCapacity_FreesExcess(t *testing.T) {
 	}
 
 	// threshold=2048 → 3 条 1024 = 3072 > 2048，删完 3 条让 total=0 ≤ 2048
-	report, err := db.RunCapacity(ctx, 2, 2048, 200)
+	report, err := db.RunCapacity(ctx, 2, 2048, 200, false)
 	if err != nil {
 		t.Fatalf("RunCapacity: %v", err)
 	}

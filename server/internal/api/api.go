@@ -86,6 +86,12 @@ type Options struct {
 	RunCleanupTask func(ctx context.Context, id int64) (CleanupReport, error)
 	// GetUpstreamHealth 拿上游连通性快照。
 	GetUpstreamHealth func() UpstreamHealth
+	// GetSettings 拿系统设置。
+	GetSettings func(ctx context.Context) (SystemSettings, error)
+	// UpdateSettings 改系统设置。
+	UpdateSettings func(ctx context.Context, patch SettingsPatch, userID int64) (SystemSettings, error)
+	// DryRunCleanup 跑一次清理预估（不实际删除）。
+	DryRunCleanup func(ctx context.Context, taskID int64) (CleanupReport, error)
 	// AuthDB 鉴权后端（PRD §9.7.1）。nil 时不要求登录（开发模式）。
 	AuthDB AuthDB
 }
@@ -168,6 +174,27 @@ type UpstreamHealth struct {
 	LastChecked int64  `json:"lastChecked"`
 }
 
+// SystemSettings 是 /api/settings 响应 / 入参。
+type SystemSettings struct {
+	SmallVPSOpt       bool   `json:"smallVpsOpt"`
+	ReserveSpaceGB    int    `json:"reserveSpaceGb"`
+	MaxObjectSizeMB   int    `json:"maxObjectSizeMb"`
+	CacheTotalGB      int    `json:"cacheTotalGb"`
+	CleanupTriggerPct int    `json:"cleanupTriggerPct"`
+	CleanupTargetPct  int    `json:"cleanupTargetPct"`
+	UpdatedAt         int64  `json:"updatedAt"`
+}
+
+// SettingsPatch 是 PATCH /api/settings 入参（所有字段可选）。
+type SettingsPatch struct {
+	SmallVPSOpt       *bool `json:"smallVpsOpt,omitempty"`
+	ReserveSpaceGB    *int  `json:"reserveSpaceGb,omitempty"`
+	MaxObjectSizeMB   *int  `json:"maxObjectSizeMb,omitempty"`
+	CacheTotalGB      *int  `json:"cacheTotalGb,omitempty"`
+	CleanupTriggerPct *int  `json:"cleanupTriggerPct,omitempty"`
+	CleanupTargetPct  *int  `json:"cleanupTargetPct,omitempty"`
+}
+
 // NewRouter 构造配置好的 chi 路由。
 //
 // 返回的 Router 已经是中间件齐备的实例，可以直接挂到 http.Server。
@@ -210,6 +237,9 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/cleanup/tasks", cleanupTasksHandler(opts))
 		r.Post("/cleanup/tasks/{id}/run", runCleanupHandler(opts))
 		r.Get("/health/upstream", upstreamHealthHandler(opts))
+		r.Get("/settings", settingsGetHandler(opts))
+		r.Patch("/settings", settingsPatchHandler(opts))
+		r.Post("/cleanup/tasks/{id}/dry-run", cleanupDryRunHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

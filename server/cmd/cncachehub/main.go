@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -91,15 +92,37 @@ func run() error {
 	}()
 	logpkg.Info("storage ready", "db_path", db.Path)
 
+	// 3b. 同步 env -> DB（仅首次；后续 UI 改值不会被重启覆盖）。
+	if err := syncEnvToSettings(rootCtx, db, &cfg); err != nil {
+		return fmt.Errorf("sync env to settings: %w", err)
+	}
+
 	// 4. 初始化 cache + 上游 + proxy。
+	// 4a. 优先从 DB 读 settings（UI 改值后重启会保留），fallback 到 cfg。
+	maxMB := cfg.MaxObjectSizeMB
+	reserveGB := cfg.ReserveSpaceGB
+	if s, err := db.GetSetting(rootCtx, storage.SettingMaxObjectSizeMB); err == nil && s.Value != "" {
+		if n, perr := strconv.Atoi(s.Value); perr == nil && n > 0 {
+			maxMB = n
+		}
+	}
+	if s, err := db.GetSetting(rootCtx, storage.SettingReserveSpaceGB); err == nil && s.Value != "" {
+		if n, perr := strconv.Atoi(s.Value); perr == nil && n > 0 {
+			reserveGB = n
+		}
+	}
 	fs, err := cache.NewFileStore(cfg.CacheDir, cache.Policy{
-		MaxObjectSize: int64(cfg.MaxObjectSizeMB) * 1024 * 1024,
-		ReserveSpace:  int64(cfg.ReserveSpaceGB) * 1024 * 1024 * 1024,
+		MaxObjectSize: int64(maxMB) * 1024 * 1024,
+		ReserveSpace:  int64(reserveGB) * 1024 * 1024 * 1024,
 	})
 	if err != nil {
 		return fmt.Errorf("init cache: %w", err)
 	}
-	logpkg.Info("cache ready", "root", fs.RootDir())
+	logpkg.Info("cache ready",
+		"root", fs.RootDir(),
+		"max_object_size_mb", maxMB,
+		"reserve_space_gb", reserveGB,
+	)
 
 	up, err := proxy.NewUpstream(proxy.UpstreamOptions{
 		BaseURL: cfg.UpstreamRegistry,
@@ -159,6 +182,9 @@ func run() error {
 		ListCleanupTasks:    makeListCleanupTasksAdapter(db),
 		RunCleanupTask:      makeRunCleanupTaskAdapter(db, fs),
 		GetUpstreamHealth:   makeGetUpstreamHealthAdapter(upstreamHealth),
+		GetSettings:         makeGetSettingsAdapter(db),
+		UpdateSettings:      makeUpdateSettingsAdapter(db, fs),
+		DryRunCleanup:       makeDryRunCleanupAdapter(db),
 		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
 	})
 	srv := &http.Server{
@@ -267,16 +293,17 @@ func consumeAccessLogs(ctx context.Context, db *storage.DB, ch <-chan proxy.Acce
 // proxyToStorageRec 把 proxy.AccessLog 转成 storage.AccessLogRecord。
 func proxyToStorageRec(rec proxy.AccessLog) storage.AccessLogRecord {
 	return storage.AccessLogRecord{
-		CreatedAt:  time.Now().Unix(),
-		Method:     rec.Method,
-		Path:       rec.Path,
-		Status:     rec.Status,
-		DurationMs: rec.DurationMs,
-		Cached:     rec.Cached,
-		Bypassed:   rec.Bypassed != cache.BypassNone,
-		ClientIP:   rec.ClientIP,
-		Bytes:      rec.Bytes,
-		Error:      rec.Error,
+		CreatedAt:    time.Now().Unix(),
+		Method:       rec.Method,
+		Path:         rec.Path,
+		Status:       rec.Status,
+		DurationMs:   rec.DurationMs,
+		Cached:       rec.Cached,
+		Bypassed:     rec.Bypassed != cache.BypassNone,
+		BypassReason: string(rec.Bypassed), // '' / 'size_limit' / 'disk_low'
+		ClientIP:     rec.ClientIP,
+		Bytes:        rec.Bytes,
+		Error:        rec.Error,
 	}
 }
 
@@ -343,6 +370,200 @@ func makeGetUpstreamHealthAdapter(h *upstreamHealth) func() api.UpstreamHealth {
 			LastChecked: s.LastChecked,
 		}
 	}
+}
+
+// makeGetSettingsAdapter 读 system_settings → api.SystemSettings。
+func makeGetSettingsAdapter(db *storage.DB) func(ctx context.Context) (api.SystemSettings, error) {
+	return func(ctx context.Context) (api.SystemSettings, error) {
+		settings, err := db.ListSettings(ctx)
+		if err != nil {
+			return api.SystemSettings{}, err
+		}
+		out := api.SystemSettings{}
+		var latest int64
+		for _, s := range settings {
+			switch s.Key {
+			case storage.SettingSmallVPSOpt:
+				out.SmallVPSOpt = s.Value == "true"
+			case storage.SettingReserveSpaceGB:
+				out.ReserveSpaceGB = atoiSafe(s.Value, 5)
+			case storage.SettingMaxObjectSizeMB:
+				out.MaxObjectSizeMB = atoiSafe(s.Value, 1024)
+			case storage.SettingCacheTotalGB:
+				out.CacheTotalGB = atoiSafe(s.Value, 20)
+			case storage.SettingCleanupTriggerPct:
+				out.CleanupTriggerPct = atoiSafe(s.Value, 80)
+			case storage.SettingCleanupTargetPct:
+				out.CleanupTargetPct = atoiSafe(s.Value, 60)
+			}
+			if s.UpdatedAt > latest {
+				latest = s.UpdatedAt
+			}
+		}
+		out.UpdatedAt = latest
+		return out, nil
+	}
+}
+
+// makeUpdateSettingsAdapter PATCH 部分字段。
+func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore) func(ctx context.Context, patch api.SettingsPatch, userID int64) (api.SystemSettings, error) {
+	return func(ctx context.Context, patch api.SettingsPatch, userID int64) (api.SystemSettings, error) {
+		kvs := map[string]string{}
+		if patch.SmallVPSOpt != nil {
+			if *patch.SmallVPSOpt {
+				kvs[storage.SettingSmallVPSOpt] = "true"
+			} else {
+				kvs[storage.SettingSmallVPSOpt] = "false"
+			}
+		}
+		if patch.ReserveSpaceGB != nil {
+			kvs[storage.SettingReserveSpaceGB] = itoa(*patch.ReserveSpaceGB)
+		}
+		if patch.MaxObjectSizeMB != nil {
+			kvs[storage.SettingMaxObjectSizeMB] = itoa(*patch.MaxObjectSizeMB)
+		}
+		if patch.CacheTotalGB != nil {
+			kvs[storage.SettingCacheTotalGB] = itoa(*patch.CacheTotalGB)
+		}
+		if patch.CleanupTriggerPct != nil {
+			kvs[storage.SettingCleanupTriggerPct] = itoa(*patch.CleanupTriggerPct)
+		}
+		if patch.CleanupTargetPct != nil {
+			kvs[storage.SettingCleanupTargetPct] = itoa(*patch.CleanupTargetPct)
+		}
+		if err := db.SetMany(ctx, kvs, userID); err != nil {
+			return api.SystemSettings{}, err
+		}
+		if patch.CacheTotalGB != nil {
+			thresholdBytes := int64(*patch.CacheTotalGB) * 1024 * 1024 * 1024
+			_, _ = db.SQLDB.ExecContext(ctx, `
+				UPDATE cleanup_tasks SET threshold_bytes = ?
+				WHERE task_name = 'capacity-cap' AND strategy = 'capacity'
+			`, thresholdBytes)
+		}
+		// 热重载 cache policy（PRD §9.1.4 要求"用户可随时调整"）。
+		if fs != nil {
+			s, _ := makeGetSettingsAdapter(db)(ctx)
+			fs.SetPolicy(cache.Policy{
+				MaxObjectSize: int64(s.MaxObjectSizeMB) * 1024 * 1024,
+				ReserveSpace:  int64(s.ReserveSpaceGB) * 1024 * 1024 * 1024,
+			})
+			logpkg.Info("cache policy reloaded",
+				"max_object_size_mb", s.MaxObjectSizeMB,
+				"reserve_space_gb", s.ReserveSpaceGB,
+				"small_vps_opt", s.SmallVPSOpt,
+			)
+		}
+		if userID > 0 {
+			_ = db.WriteAudit(ctx, storage.AuditLog{
+				UserID:    userID,
+				Action:    "update_settings",
+				Status:    "ok",
+				Details:   summarizePatch(patch),
+				CreatedAt: time.Now().Unix(),
+			})
+		}
+		return makeGetSettingsAdapter(db)(ctx)
+	}
+}
+
+// makeDryRunCleanupAdapter 包装 dryRunCleanup → api。
+func makeDryRunCleanupAdapter(db *storage.DB) func(ctx context.Context, id int64) (api.CleanupReport, error) {
+	return func(ctx context.Context, id int64) (api.CleanupReport, error) {
+		rep, err := dryRunCleanup(ctx, db, id)
+		if err != nil {
+			return api.CleanupReport{}, err
+		}
+		return api.CleanupReport{
+			TaskID:      rep.TaskID,
+			Strategy:    rep.Strategy,
+			FreedCount:  rep.FreedCount,
+			FreedBytes:  rep.FreedBytes,
+			BeforeCount: rep.BeforeCount,
+			BeforeBytes: rep.BeforeBytes,
+			AfterCount:  rep.AfterCount,
+			AfterBytes:  rep.AfterBytes,
+			DurationMs:  rep.DurationMs,
+		}, nil
+	}
+}
+
+// syncEnvToSettings 把 cfg 里的 env 值同步进 DB（启动时一次）。
+//
+// 只覆盖表里不存在的 key（INSERT OR IGNORE）；UI 后续改值不会被重启覆盖。
+func syncEnvToSettings(ctx context.Context, db *storage.DB, cfg *config.Config) error {
+	kvs := map[string]string{
+		storage.SettingSmallVPSOpt:     boolToStr(cfg.SmallVPSOpt),
+		storage.SettingReserveSpaceGB:  itoa(cfg.ReserveSpaceGB),
+		storage.SettingMaxObjectSizeMB: itoa(cfg.MaxObjectSizeMB),
+		storage.SettingCacheTotalGB:    itoa(cfg.CacheTotalGB),
+	}
+	now := time.Now().Unix()
+	for k, v := range kvs {
+		_, err := db.SQLDB.ExecContext(ctx, `
+			INSERT OR IGNORE INTO system_settings (key, value, updated_at, updated_by)
+			VALUES (?, ?, ?, 0)
+		`, k, v, now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func boolToStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
+}
+
+func atoiSafe(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func summarizePatch(p api.SettingsPatch) string {
+	parts := []string{}
+	if p.SmallVPSOpt != nil {
+		parts = append(parts, "small_vps_opt="+boolToStr(*p.SmallVPSOpt))
+	}
+	if p.ReserveSpaceGB != nil {
+		parts = append(parts, "reserve_space_gb="+itoa(*p.ReserveSpaceGB))
+	}
+	if p.MaxObjectSizeMB != nil {
+		parts = append(parts, "max_object_size_mb="+itoa(*p.MaxObjectSizeMB))
+	}
+	if p.CacheTotalGB != nil {
+		parts = append(parts, "cache_total_gb="+itoa(*p.CacheTotalGB))
+	}
+	if p.CleanupTriggerPct != nil {
+		parts = append(parts, "cleanup_trigger_pct="+itoa(*p.CleanupTriggerPct))
+	}
+	if p.CleanupTargetPct != nil {
+		parts = append(parts, "cleanup_target_pct="+itoa(*p.CleanupTargetPct))
+	}
+	if len(parts) == 0 {
+		return "noop"
+	}
+	out := ""
+	for i, q := range parts {
+		if i > 0 {
+			out += ","
+		}
+		out += q
+	}
+	return out
 }
 
 // metaWriterAdapter 把 proxy.MetaWriter 接口适配到 storage.DB。
@@ -434,9 +655,9 @@ func runCleanup(ctx context.Context, db *storage.DB, fs *cache.FileStore, taskID
 	var report storage.CleanupReport
 	switch t.Strategy {
 	case "lru":
-		report, err = db.RunLRU(ctx, taskID, t.ThresholdSeconds, 200)
+		report, err = db.RunLRU(ctx, taskID, t.ThresholdSeconds, 200, false)
 	case "capacity":
-		report, err = db.RunCapacity(ctx, taskID, t.ThresholdBytes, 200)
+		report, err = db.RunCapacity(ctx, taskID, t.ThresholdBytes, 200, false)
 	default:
 		return storage.CleanupReport{}, fmt.Errorf("unknown strategy: %s", t.Strategy)
 	}
@@ -449,6 +670,25 @@ func runCleanup(ctx context.Context, db *storage.DB, fs *cache.FileStore, taskID
 		_ = deleteFilesForReport(ctx, db, fs, t, report)
 	}
 	return report, nil
+}
+
+// dryRunCleanup 干跑一次清理任务（不算真删）。
+//
+// 返回的 report.freed_count / freed_bytes 是预估；after_* = before_* - freed_*。
+// 不动 DB 行，不动文件。
+func dryRunCleanup(ctx context.Context, db *storage.DB, taskID int64) (storage.CleanupReport, error) {
+	t, err := db.GetCleanupTaskByID(ctx, taskID)
+	if err != nil {
+		return storage.CleanupReport{}, err
+	}
+	switch t.Strategy {
+	case "lru":
+		return db.RunLRU(ctx, taskID, t.ThresholdSeconds, 200, true)
+	case "capacity":
+		return db.RunCapacity(ctx, taskID, t.ThresholdBytes, 200, true)
+	default:
+		return storage.CleanupReport{}, fmt.Errorf("unknown strategy: %s", t.Strategy)
+	}
 }
 
 // deleteFilesForReport 清理 run 删掉的行对应的 cache blob 文件。

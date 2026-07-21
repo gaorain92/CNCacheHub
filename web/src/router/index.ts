@@ -61,6 +61,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '缓存管理' },
   },
   {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+    meta: { title: '系统设置' },
+  },
+  {
     path: '/logs',
     name: 'logs',
     component: () => import('@/views/LogsView.vue'),

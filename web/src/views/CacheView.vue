@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Brush, DataLine, Delete, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCacheStore } from '@/stores/cache'
-import { getCleanupTasks, runCleanupTask } from '@/api/cleanup'
+import { getCleanupTasks, runCleanupTask, dryRunCleanupTask } from '@/api/cleanup'
 import type { CleanupTask } from '@/types/api'
 
 const cache = useCacheStore()
@@ -68,13 +68,25 @@ function onSearch(q: string): void {
 }
 
 async function runCleanup(t: CleanupTask): Promise<void> {
+  // 1) 先 dry-run 预估（PRD §9.6.5 防误删）
+  const report = await dryRunCleanupTask(t.id)
+  const human = `预计释放 ${report.freedCount} 条 / ${formatBytes(report.freedBytes)} / 耗时 ${report.durationMs}ms`
+  try {
+    await ElMessageBox.confirm(
+      `${describeTask(t)}\n\n${human}\n\n确认执行清理？此操作不可撤销。`,
+      `${t.name} · 清理预估`,
+      { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  // 2) 真跑
   runningId.value = t.id
   try {
     const rep = await runCleanupTask(t.id)
     ElMessage.success(
       `清理完成：删除 ${rep.freedCount} 条 / 释放 ${formatBytes(rep.freedBytes)} / 耗时 ${rep.durationMs}ms`
     )
-    // 刷新
     await cache.fetch()
     const fresh = await getCleanupTasks()
     tasks.value = fresh

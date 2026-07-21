@@ -51,6 +51,61 @@ func TestInsertAndListAccessLog(t *testing.T) {
 	}
 }
 
+// TestInsertAccessLog_BypassReason 回归测试：AccessLogRecord 的 BypassReason
+// 必须正确写进 request_logs.bypass_reason。
+//
+// 历史 bug：存储层写 bypass 列时用 `if rec.Bypassed`（bool）但 proxy 传 BypassReason
+// 是 string，导致 bypass 永远写 0；BypassReason 被 fallback 覆盖成 "bypassed"。
+func TestInsertAccessLog_BypassReason(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	cases := []struct {
+		name       string
+		rec        AccessLogRecord
+		wantStored int    // bypassed column value
+		wantReason string // bypass_reason column value
+	}{
+		{"normal", AccessLogRecord{Method: "GET", Path: "/v2/", Status: 200, Cached: false, BypassReason: ""}, 0, ""},
+		{"size_limit", AccessLogRecord{Method: "GET", Path: "/v2/lib/x/blobs/sha256:abc", Status: 200, BypassReason: "size_limit"}, 1, "size_limit"},
+		{"disk_low", AccessLogRecord{Method: "GET", Path: "/v2/lib/x/blobs/sha256:def", Status: 200, BypassReason: "disk_low"}, 1, "disk_low"},
+		{"bool_only", AccessLogRecord{Method: "GET", Path: "/v2/lib/x/blobs/sha256:ghi", Status: 200, Bypassed: true}, 1, "bypassed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := db.InsertAccessLog(ctx, c.rec); err != nil {
+				t.Fatalf("InsertAccessLog: %v", err)
+			}
+		})
+	}
+
+	rows, err := db.SQLDB.QueryContext(ctx, `SELECT bypassed, bypass_reason FROM request_logs ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	i := 0
+	for rows.Next() {
+		var bypassed int
+		var reason string
+		if err := rows.Scan(&bypassed, &reason); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if bypassed != cases[i].wantStored {
+			t.Errorf("case %d (%s): bypassed = %d, want %d", i, cases[i].name, bypassed, cases[i].wantStored)
+		}
+		if reason != cases[i].wantReason {
+			t.Errorf("case %d (%s): bypass_reason = %q, want %q", i, cases[i].name, reason, cases[i].wantReason)
+		}
+		i++
+	}
+}
+
 func TestListAccessLogs_Pagination(t *testing.T) {
 	dir := newTempDataDir(t)
 	ctx := context.Background()

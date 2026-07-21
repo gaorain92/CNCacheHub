@@ -206,12 +206,13 @@ func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.R
 
 		// 2) 未命中：上游流式下载 + 异步落盘
 		upPath := "/v2/" + name + "/blobs/" + digest
-		status, n, bypassed, err := p.fetchAndCache(ctx, w, r, upPath, registry, name, digest)
+		status, n, bypassedReason, err := p.fetchAndCache(ctx, w, r, upPath, registry, name, digest)
 		entry.Status = status
 		entry.Bytes = n
-		entry.Bypassed = bypassed
-		if bypassed != cache.BypassNone {
-			w.Header().Set("X-CNCacheHub-Bypass", string(bypassed))
+		entry.Bypassed = bypassedReason
+		entry.BypassReason = string(bypassedReason)
+		if bypassedReason != cache.BypassNone {
+			w.Header().Set("X-CNCacheHub-Bypass", string(bypassedReason))
 		}
 		if err != nil {
 			entry.Error = err.Error()
