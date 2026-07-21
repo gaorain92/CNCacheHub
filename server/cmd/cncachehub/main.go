@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -117,6 +118,12 @@ func run() error {
 	// 5. 启 access log consumer goroutine。
 	go consumeAccessLogs(rootCtx, db, accessLogCh)
 
+	// 5b. 启 cleanup scheduler goroutine（按 cron 跑 LRU / capacity 清理）。
+	go runCleanupScheduler(rootCtx, db, fs, cfg.CacheTotalGB)
+
+	// 5c. 启 upstream health checker（每 60s 探一次，缓存在内存里给 /api/health/upstream 读）。
+	upstreamHealth := startUpstreamHealthChecker(rootCtx, cfg.UpstreamRegistry)
+
 	// 6. 构造 HTTP server。
 	build := api.BuildInfo{
 		Name:    "cncachehub",
@@ -135,6 +142,9 @@ func run() error {
 		GetAccessLogs:       makeListAccessLogsAdapter(db),
 		GetCacheEntries:     makeListCacheEntriesAdapter(db, fs),
 		DeleteCacheEntry:    makeDeleteCacheEntryAdapter(db, fs),
+		ListCleanupTasks:    makeListCleanupTasksAdapter(db),
+		RunCleanupTask:      makeRunCleanupTaskAdapter(db, fs),
+		GetUpstreamHealth:   makeGetUpstreamHealthAdapter(upstreamHealth),
 	})
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -255,6 +265,71 @@ func proxyToStorageRec(rec proxy.AccessLog) storage.AccessLogRecord {
 	}
 }
 
+// makeListCleanupTasksAdapter 包装 storage.ListCleanupTasks → api。
+func makeListCleanupTasksAdapter(db *storage.DB) func(ctx context.Context) ([]api.CleanupTask, error) {
+	return func(ctx context.Context) ([]api.CleanupTask, error) {
+		rows, err := db.ListCleanupTasks(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]api.CleanupTask, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, api.CleanupTask{
+				ID:               r.ID,
+				Name:             r.Name,
+				Strategy:         r.Strategy,
+				ThresholdSeconds: r.ThresholdSeconds,
+				ThresholdBytes:   r.ThresholdBytes,
+				Enabled:          r.Enabled,
+				CronIntervalSec:  r.CronIntervalSec,
+				LastRunAt:        r.LastRunAt,
+				LastStatus:       r.LastStatus,
+				LastFreedBytes:   r.LastFreedBytes,
+				LastFreedCount:   r.LastFreedCount,
+				CreatedAt:        r.CreatedAt,
+			})
+		}
+		return out, nil
+	}
+}
+
+// makeRunCleanupTaskAdapter 包装 runCleanup → api。
+func makeRunCleanupTaskAdapter(db *storage.DB, fs *cache.FileStore) func(ctx context.Context, id int64) (api.CleanupReport, error) {
+	return func(ctx context.Context, id int64) (api.CleanupReport, error) {
+		rep, err := runCleanup(ctx, db, fs, id)
+		if err != nil {
+			return api.CleanupReport{}, err
+		}
+		// 更新 last_run
+		_ = db.UpdateCleanupTaskLastRun(ctx, id, "ok", rep.FreedBytes, rep.FreedCount)
+		return api.CleanupReport{
+			TaskID:      rep.TaskID,
+			Strategy:    rep.Strategy,
+			FreedCount:  rep.FreedCount,
+			FreedBytes:  rep.FreedBytes,
+			BeforeCount: rep.BeforeCount,
+			BeforeBytes: rep.BeforeBytes,
+			AfterCount:  rep.AfterCount,
+			AfterBytes:  rep.AfterBytes,
+			DurationMs:  rep.DurationMs,
+		}, nil
+	}
+}
+
+// makeGetUpstreamHealthAdapter 包装 *upstreamHealth → api.UpstreamHealth。
+func makeGetUpstreamHealthAdapter(h *upstreamHealth) func() api.UpstreamHealth {
+	return func() api.UpstreamHealth {
+		s := h.Snapshot()
+		return api.UpstreamHealth{
+			URL:         s.URL,
+			Reachable:   s.Reachable,
+			LatencyMs:   s.LatencyMs,
+			Error:       s.Error,
+			LastChecked: s.LastChecked,
+		}
+	}
+}
+
 // metaWriterAdapter 把 proxy.MetaWriter 接口适配到 storage.DB。
 type metaWriterAdapter struct {
 	db *storage.DB
@@ -266,6 +341,233 @@ func (m *metaWriterAdapter) UpsertCacheEntry(ctx context.Context, e storage.Cach
 
 func (m *metaWriterAdapter) TouchCacheEntry(ctx context.Context, registry, repo, digest string) error {
 	return m.db.TouchCacheEntry(ctx, registry, repo, digest)
+}
+
+// runCleanupScheduler 按 cron 周期跑 cleanup_tasks。
+//
+// 行为：每 30s 扫描 enabled 任务，看 last_run_at + cron_interval_sec 是否到期；
+// 到期则同步跑（fast 1min 内完成，blocking 也不会太久）。
+func runCleanupScheduler(ctx context.Context, db *storage.DB, fs *cache.FileStore, cacheTotalGB int) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// 启动时把 capacity 任务的 threshold_bytes 同步成当前配置（如果用户改了 config 不想重启后跑老值）
+	if cacheTotalGB > 0 {
+		thresholdBytes := int64(cacheTotalGB) * 1024 * 1024 * 1024
+		_, _ = db.SQLDB.ExecContext(ctx, `
+			UPDATE cleanup_tasks SET threshold_bytes = ?
+			WHERE task_name = 'capacity-cap' AND strategy = 'capacity'
+		`, thresholdBytes)
+	}
+
+	run := func(taskID int64) {
+		// 5s 超时（清理不应阻塞其它 goroutine 太久）
+		runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		report, err := runCleanup(runCtx, db, fs, taskID)
+		status := "ok"
+		if err != nil {
+			status = "error: " + err.Error()
+		}
+		if uerr := db.UpdateCleanupTaskLastRun(runCtx, taskID, status, report.FreedBytes, report.FreedCount); uerr != nil {
+			logpkg.Warn("update cleanup task last_run", "err", uerr.Error(), "task_id", taskID)
+		}
+		logpkg.Info("cleanup task run",
+			"task_id", taskID,
+			"strategy", report.Strategy,
+			"freed_count", report.FreedCount,
+			"freed_bytes", report.FreedBytes,
+			"duration_ms", report.DurationMs,
+			"status", status,
+		)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		tasks, err := db.ListCleanupTasks(ctx)
+		if err != nil {
+			logpkg.Warn("list cleanup tasks", "err", err.Error())
+			continue
+		}
+		now := time.Now().Unix()
+		for _, t := range tasks {
+			if !t.Enabled {
+				continue
+			}
+			interval := int64(t.CronIntervalSec)
+			if interval <= 0 {
+				interval = 3600
+			}
+			if now-t.LastRunAt < interval {
+				continue
+			}
+			run(t.ID)
+		}
+	}
+}
+
+// runCleanup 实际跑一个任务（含删文件 + 删 DB 行）。
+func runCleanup(ctx context.Context, db *storage.DB, fs *cache.FileStore, taskID int64) (storage.CleanupReport, error) {
+	t, err := db.GetCleanupTaskByID(ctx, taskID)
+	if err != nil {
+		return storage.CleanupReport{}, err
+	}
+	var report storage.CleanupReport
+	switch t.Strategy {
+	case "lru":
+		report, err = db.RunLRU(ctx, taskID, t.ThresholdSeconds, 200)
+	case "capacity":
+		report, err = db.RunCapacity(ctx, taskID, t.ThresholdBytes, 200)
+	default:
+		return storage.CleanupReport{}, fmt.Errorf("unknown strategy: %s", t.Strategy)
+	}
+	if err != nil {
+		return report, err
+	}
+	// 文件删除走与 DELETE 相同的逻辑：列每个被删的 entry 删 blob 文件
+	// （实现简化：从 cache_entries 中找出 last_access_at 旧于 cutoff 的，调 fs.Delete）
+	if report.FreedCount > 0 {
+		_ = deleteFilesForReport(ctx, db, fs, t, report)
+	}
+	return report, nil
+}
+
+// deleteFilesForReport 清理 run 删掉的行对应的 cache blob 文件。
+// 实际策略：跑一次相同 LRU/capacity 选条目列表，逐个调 fs.Delete。
+// 注意：可能跟 run 已经删的 row 有重复（race），但 fs.Delete 幂等，不影响。
+func deleteFilesForReport(ctx context.Context, db *storage.DB, fs *cache.FileStore, t *storage.CleanupTask, _ storage.CleanupReport) error {
+	switch t.Strategy {
+	case "lru":
+		cutoff := time.Now().Unix() - int64(t.ThresholdSeconds)
+		rows, err := db.SQLDB.QueryContext(ctx, `SELECT registry, repository, digest FROM cache_entries WHERE last_access_at < ? AND digest != ''`, cutoff)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var reg, repo, dig string
+			if err := rows.Scan(&reg, &repo, &dig); err != nil {
+				return err
+			}
+			if err := fs.Delete(reg, repo, dig); err != nil {
+				logpkg.Warn("cleanup: delete file", "err", err.Error(), "digest", dig)
+			}
+		}
+	case "capacity":
+		// 跑后再次检查，超过阈值就再删最旧的（直到 ≤ 阈值）
+		for {
+			var total int64
+			if err := db.SQLDB.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries`).Scan(&total); err != nil {
+				return err
+			}
+			if total <= t.ThresholdBytes {
+				break
+			}
+			rows, err := db.SQLDB.QueryContext(ctx, `SELECT registry, repository, digest, size_bytes FROM cache_entries WHERE digest != '' ORDER BY last_access_at ASC LIMIT 50`)
+			if err != nil {
+				return err
+			}
+			var batch []struct {
+				reg, repo, dig string
+				size           int64
+			}
+			for rows.Next() {
+				var b struct {
+					reg, repo, dig string
+					size           int64
+				}
+				if err := rows.Scan(&b.reg, &b.repo, &b.dig, &b.size); err != nil {
+					rows.Close()
+					return err
+				}
+				batch = append(batch, b)
+			}
+			rows.Close()
+			if len(batch) == 0 {
+				break
+			}
+			for _, b := range batch {
+				_, _ = db.SQLDB.ExecContext(ctx, `DELETE FROM cache_entries WHERE registry=? AND repository=? AND digest=?`, b.reg, b.repo, b.dig)
+				if err := fs.Delete(b.reg, b.repo, b.dig); err != nil {
+					logpkg.Warn("cleanup: delete file", "err", err.Error(), "digest", b.dig)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// upstreamHealth 缓存上游连通性检测结果（goroutine 安全）。
+type upstreamHealth struct {
+	mu     sync.RWMutex
+	latest UpstreamHealthSnapshot
+}
+
+// UpstreamHealthSnapshot 一次检测的快照。
+type UpstreamHealthSnapshot struct {
+	URL         string `json:"url"`
+	Reachable   bool   `json:"reachable"`
+	LatencyMs   int64  `json:"latencyMs"`
+	Error       string `json:"error,omitempty"`
+	LastChecked int64  `json:"lastChecked"`
+}
+
+// startUpstreamHealthChecker 启 goroutine 每 60s 探一次上游 registry。
+func startUpstreamHealthChecker(ctx context.Context, upstreamURL string) *upstreamHealth {
+	h := &upstreamHealth{latest: UpstreamHealthSnapshot{URL: upstreamURL, Reachable: true}}
+	hc := &http.Client{Timeout: 5 * time.Second}
+	check := func() {
+		start := time.Now()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL+"/v2/", nil)
+		req.Header.Set("User-Agent", "cncachehub-healthcheck")
+		resp, err := hc.Do(req)
+		latency := time.Since(start).Milliseconds()
+		snap := UpstreamHealthSnapshot{
+			URL:         upstreamURL,
+			LatencyMs:   latency,
+			LastChecked: time.Now().Unix(),
+		}
+		if err != nil {
+			snap.Reachable = false
+			snap.Error = err.Error()
+		} else {
+			_ = resp.Body.Close()
+			// 401 也算 reachable（说明上游响应了，是 network 通）
+			snap.Reachable = resp.StatusCode > 0
+			if resp.StatusCode >= 500 {
+				snap.Reachable = false
+				snap.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+		}
+		h.mu.Lock()
+		h.latest = snap
+		h.mu.Unlock()
+	}
+	check() // 启动时立即跑一次
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				check()
+			}
+		}
+	}()
+	return h
+}
+
+// Snapshot 返回当前快照。
+func (h *upstreamHealth) Snapshot() UpstreamHealthSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.latest
 }
 
 // accessLogBridge 把 api.AccessLogRecord 写入 storage。

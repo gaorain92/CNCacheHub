@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import {
+  Connection,
   DataLine,
   FolderOpened,
   Lightning,
@@ -11,15 +12,22 @@ import {
 import StatusDot from '@/components/StatusDot.vue'
 import { useHealthStore } from '@/stores/health'
 import { useDashboardStore } from '@/stores/dashboard'
+import { useUpstreamStore } from '@/stores/upstream'
 
 const health = useHealthStore()
 const dashboard = useDashboardStore()
+const upstream = useUpstreamStore()
 
 const dotStatus = computed(() => {
   if (health.status === 'ok' && health.backendConnected) return 'ok' as const
   if (health.status === 'down') return 'down' as const
   if (!health.backendConnected) return 'down' as const
   return 'unknown' as const
+})
+
+const upstreamStatus = computed<'ok' | 'down' | 'unknown'>(() => {
+  if (!upstream.data) return 'unknown'
+  return upstream.data.reachable ? 'ok' : 'down'
 })
 
 const welcomeTitle = computed(() => {
@@ -41,9 +49,11 @@ let timer: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await health.fetch()
   await dashboard.fetch()
+  await upstream.fetch()
   timer = setInterval(() => {
     health.fetch()
     dashboard.fetch()
+    upstream.fetch()
   }, 15_000)
 })
 
@@ -52,7 +62,7 @@ onBeforeUnmount(() => {
 })
 
 async function refresh(): Promise<void> {
-  await Promise.all([health.fetch(), dashboard.fetch()])
+  await Promise.all([health.fetch(), dashboard.fetch(), upstream.fetch()])
 }
 </script>
 
@@ -77,6 +87,18 @@ async function refresh(): Promise<void> {
           {{ health.backendConnected ? '在线' : '离线' }}
         </div>
         <div class="text-xs text-slate-500 mt-2">uptime {{ health.uptime }}</div>
+      </div>
+
+      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
+        <div class="text-xs text-slate-500 mb-2">上游 Registry</div>
+        <div class="text-2xl font-semibold flex items-center gap-2" :class="upstreamStatus === 'ok' ? 'text-mint' : 'text-rose-400'">
+          <el-icon :size="18"><Connection /></el-icon>
+          {{ upstreamStatus === 'ok' ? '可达' : upstreamStatus === 'down' ? '不可达' : '检测中' }}
+        </div>
+        <div class="text-xs text-slate-500 mt-2">
+          <span v-if="upstream.data">{{ upstream.data.latencyMs }}ms · {{ upstream.data.url.replace('https://', '').replace('http://', '') }}</span>
+          <span v-else>等待首次检测…</span>
+        </div>
       </div>
 
       <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">

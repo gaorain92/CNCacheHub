@@ -80,6 +80,12 @@ type Options struct {
 	GetCacheEntries func(ctx context.Context, page, pageSize int, query string) ([]CacheEntry, int, error)
 	// DeleteCacheEntry 按 id 删除（DB 行 + 调用方负责删 blob 文件）。
 	DeleteCacheEntry func(ctx context.Context, id int64) error
+	// ListCleanupTasks 列出所有 cleanup_tasks。
+	ListCleanupTasks func(ctx context.Context) ([]CleanupTask, error)
+	// RunCleanupTask 跑一次指定 id 的清理；返回报告。
+	RunCleanupTask func(ctx context.Context, id int64) (CleanupReport, error)
+	// GetUpstreamHealth 拿上游连通性快照。
+	GetUpstreamHealth func() UpstreamHealth
 }
 
 // Upstream 是 /api/docker/upstreams 返回的列表项。
@@ -122,6 +128,44 @@ type CacheEntry struct {
 	BypassReason string `json:"bypassReason"`
 }
 
+// CleanupTask 是 /api/cleanup/tasks 列表项。
+type CleanupTask struct {
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	Strategy         string `json:"strategy"`
+	ThresholdSeconds int    `json:"thresholdSeconds"`
+	ThresholdBytes   int64  `json:"thresholdBytes"`
+	Enabled          bool   `json:"enabled"`
+	CronIntervalSec  int    `json:"cronIntervalSec"`
+	LastRunAt        int64  `json:"lastRunAt"`
+	LastStatus       string `json:"lastStatus"`
+	LastFreedBytes   int64  `json:"lastFreedBytes"`
+	LastFreedCount   int    `json:"lastFreedCount"`
+	CreatedAt        int64  `json:"createdAt"`
+}
+
+// CleanupReport 是清理一次的结果。
+type CleanupReport struct {
+	TaskID      int64  `json:"taskId"`
+	Strategy    string `json:"strategy"`
+	FreedCount  int    `json:"freedCount"`
+	FreedBytes  int64  `json:"freedBytes"`
+	BeforeCount int    `json:"beforeCount"`
+	BeforeBytes int64  `json:"beforeBytes"`
+	AfterCount  int    `json:"afterCount"`
+	AfterBytes  int64  `json:"afterBytes"`
+	DurationMs  int64  `json:"durationMs"`
+}
+
+// UpstreamHealth 是 /api/health/upstream 响应。
+type UpstreamHealth struct {
+	URL         string `json:"url"`
+	Reachable   bool   `json:"reachable"`
+	LatencyMs   int64  `json:"latencyMs"`
+	Error       string `json:"error,omitempty"`
+	LastChecked int64  `json:"lastChecked"`
+}
+
 // NewRouter 构造配置好的 chi 路由。
 //
 // 返回的 Router 已经是中间件齐备的实例，可以直接挂到 http.Server。
@@ -149,6 +193,9 @@ func NewRouter(opts Options) http.Handler {
 		r.Delete("/cache/entries/{id}", cacheDeleteHandler(opts))
 		r.Get("/logs", accessLogsHandler(opts))
 		r.Get("/dashboard/summary", dashboardSummaryHandler(opts))
+		r.Get("/cleanup/tasks", cleanupTasksHandler(opts))
+		r.Post("/cleanup/tasks/{id}/run", runCleanupHandler(opts))
+		r.Get("/health/upstream", upstreamHealthHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { DataLine, Delete, Search } from '@element-plus/icons-vue'
+import { computed, onMounted, ref } from 'vue'
+import { Brush, DataLine, Delete, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCacheStore } from '@/stores/cache'
+import { getCleanupTasks, runCleanupTask } from '@/api/cleanup'
+import type { CleanupTask } from '@/types/api'
 
 const cache = useCacheStore()
+const tasks = ref<CleanupTask[]>([])
+const runningId = ref<number | null>(null)
 
 const totalPages = computed(() => Math.max(1, Math.ceil(cache.total / cache.pageSize)))
 
-onMounted(() => {
+onMounted(async () => {
   if (cache.items.length === 0) cache.fetch()
+  try {
+    tasks.value = await getCleanupTasks()
+  } catch {
+    // ignore
+  }
 })
 
 function shortDigest(d: string): string {
@@ -27,6 +36,13 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function describeTask(t: CleanupTask): string {
+  if (t.strategy === 'lru') {
+    return `${(t.thresholdSeconds / 86400).toFixed(1)} 天未访问 → 删除`
+  }
+  return `总量 > ${formatBytes(t.thresholdBytes)} → 删除最旧`
 }
 
 async function handleDelete(entry: { id: number; repository: string; digest: string }): Promise<void> {
@@ -49,6 +65,24 @@ async function handleDelete(entry: { id: number; repository: string; digest: str
 
 function onSearch(q: string): void {
   cache.setQuery(q.trim())
+}
+
+async function runCleanup(t: CleanupTask): Promise<void> {
+  runningId.value = t.id
+  try {
+    const rep = await runCleanupTask(t.id)
+    ElMessage.success(
+      `清理完成：删除 ${rep.freedCount} 条 / 释放 ${formatBytes(rep.freedBytes)} / 耗时 ${rep.durationMs}ms`
+    )
+    // 刷新
+    await cache.fetch()
+    const fresh = await getCleanupTasks()
+    tasks.value = fresh
+  } catch (e) {
+    ElMessage.error(`清理失败：${(e as Error).message}`)
+  } finally {
+    runningId.value = null
+  }
 }
 </script>
 
@@ -100,6 +134,49 @@ function onSearch(q: string): void {
         <div class="text-xs text-slate-500 mb-2">总条数</div>
         <div class="text-2xl font-semibold text-slate-100">{{ cache.total }}</div>
         <div class="text-xs text-slate-500 mt-2">按 last_access 倒序</div>
+      </div>
+    </div>
+
+    <!-- 清理任务 -->
+    <div v-if="tasks.length > 0" class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
+      <div class="flex items-center gap-2 mb-3">
+        <el-icon :size="18" color="#94a3b8"><Brush /></el-icon>
+        <h3 class="text-base font-semibold">清理任务</h3>
+        <span class="text-xs text-slate-500">定期释放缓存空间</span>
+      </div>
+      <div class="space-y-2">
+        <div
+          v-for="t in tasks"
+          :key="t.id"
+          class="flex items-center justify-between rounded-xl bg-white/[.04] px-4 py-3"
+        >
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <el-tag size="small" :type="t.strategy === 'lru' ? 'info' : 'warning'" effect="dark">
+                {{ t.strategy.toUpperCase() }}
+              </el-tag>
+              <span class="text-sm text-slate-200">{{ t.name }}</span>
+              <el-tag v-if="!t.enabled" size="small" effect="plain">disabled</el-tag>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              {{ describeTask(t) }}
+              <span v-if="t.lastRunAt > 0">· 上次 {{ formatTime(t.lastRunAt) }}</span>
+              <span v-if="t.lastStatus" :class="t.lastStatus.startsWith('error') ? 'text-rose-400' : 'text-slate-500'">
+                · {{ t.lastStatus }}
+              </span>
+              <span v-if="t.lastFreedCount > 0">· 释放 {{ t.lastFreedCount }} 条 / {{ formatBytes(t.lastFreedBytes) }}</span>
+            </div>
+          </div>
+          <el-button
+            :icon="Brush"
+            size="small"
+            plain
+            :loading="runningId === t.id"
+            @click="runCleanup(t)"
+          >
+            立即跑
+          </el-button>
+        </div>
       </div>
     </div>
 

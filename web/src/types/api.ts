@@ -87,3 +87,38 @@ export interface CacheEntriesResponse {
   page: number
   pageSize: number
 }
+
+export interface CleanupTask {
+  id: number
+  name: string
+  strategy: 'lru' | 'capacity'
+  thresholdSeconds: number
+  thresholdBytes: number
+  enabled: boolean
+  cronIntervalSec: number
+  lastRunAt: number
+  lastStatus: string
+  lastFreedBytes: number
+  lastFreedCount: number
+  createdAt: number
+}
+
+export interface CleanupReport {
+  taskId: number
+  strategy: string
+  freedCount: number
+  freedBytes: number
+  beforeCount: number
+  beforeBytes: number
+  afterCount: number
+  afterBytes: number
+  durationMs: number
+}
+
+export interface UpstreamHealth {
+  url: string
+  reachable: boolean
+  latencyMs: number
+  error?: string
+  lastChecked: number
+}

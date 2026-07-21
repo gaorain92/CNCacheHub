@@ -131,6 +131,60 @@ func cacheDeleteHandler(opts Options) http.HandlerFunc {
 	}
 }
 
+// cleanupTasksHandler GET /api/cleanup/tasks
+func cleanupTasksHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.ListCleanupTasks == nil {
+			writeError(w, http.StatusServiceUnavailable, "cleanup_unavailable", "cleanup not configured")
+			return
+		}
+		tasks, err := opts.ListCleanupTasks(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "cleanup_query_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": tasks,
+			"total": len(tasks),
+		})
+	}
+}
+
+// runCleanupHandler POST /api/cleanup/tasks/:id/run
+//
+// 立即跑一次清理任务（不等 cron）。
+func runCleanupHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.RunCleanupTask == nil {
+			writeError(w, http.StatusServiceUnavailable, "cleanup_unavailable", "cleanup not configured")
+			return
+		}
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_id", "id must be a positive integer")
+			return
+		}
+		report, err := opts.RunCleanupTask(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "cleanup_run_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+// upstreamHealthHandler GET /api/health/upstream
+func upstreamHealthHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.GetUpstreamHealth == nil {
+			writeError(w, http.StatusServiceUnavailable, "upstream_health_unavailable", "upstream health not configured")
+			return
+		}
+		writeJSON(w, http.StatusOK, opts.GetUpstreamHealth())
+	}
+}
+
 // accessLogsHandler GET /api/logs?page=1&pageSize=50
 func accessLogsHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -170,10 +170,15 @@ func (d *DB) runMigrations(ctx context.Context) error {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
 		// 注意：SQLite 的 ExecContext 一次只能执行一条 statement。
-		// 我们的 migrations 文件每条以 ; 结尾、不含 BEGIN/COMMIT 等结构，因此可以整段执行。
-		// 若以后出现多语句需求，切换到 migrate.Up() / 第三方库。
-		if _, err := d.SQLDB.ExecContext(ctx, string(raw)); err != nil {
-			return fmt.Errorf("apply %s: %w", name, err)
+		// 按 `;` 切分后逐条执行，避开 modernc.org/sqlite 多语句解析的边界 case。
+		for _, stmt := range splitSQLStatements(string(raw)) {
+			s := strings.TrimSpace(stmt)
+			if s == "" {
+				continue
+			}
+			if _, err := d.SQLDB.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("apply %s: %w (stmt=%.80s)", name, err, s)
+			}
 		}
 		if _, err := d.SQLDB.ExecContext(ctx,
 			`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`,
@@ -221,4 +226,58 @@ func MigrationsFS() fs.FS {
 		panic("storage: migrations sub fs: " + err.Error())
 	}
 	return sub
+}
+
+// splitSQLStatements 按 `;` 切分 SQL。处理 -- 行注释 /* 块注释 ' " 字面量。
+// Migration 文件里没用复杂字面量，但保底处理一下。
+func splitSQLStatements(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inLineComment := false
+	inBlockComment := false
+	inSingleQuote := false
+	inDoubleQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// 行注释 --...
+		if !inBlockComment && !inSingleQuote && !inDoubleQuote && c == '-' && i+1 < len(s) && s[i+1] == '-' {
+			inLineComment = true
+			i++
+			continue
+		}
+		if inLineComment {
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		// 块注释 /* ... */
+		if !inSingleQuote && !inDoubleQuote && c == '/' && i+1 < len(s) && s[i+1] == '*' {
+			inBlockComment = true
+			i++
+			continue
+		}
+		if inBlockComment {
+			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+		if c == '\'' && !inDoubleQuote {
+			inSingleQuote = !inSingleQuote
+		} else if c == '"' && !inSingleQuote {
+			inDoubleQuote = !inDoubleQuote
+		}
+		if c == ';' && !inSingleQuote && !inDoubleQuote {
+			out = append(out, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
