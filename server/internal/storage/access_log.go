@@ -11,17 +11,17 @@ import (
 
 // AccessLogRecord 是单条 request_logs 行。
 type AccessLogRecord struct {
-	ID         int64
-	CreatedAt  int64 // unix 秒
-	Method     string
-	Path       string
-	Status     int
-	DurationMs int64
-	Cached     bool
-	Bypassed   bool
-	ClientIP   string
-	Bytes      int64
-	Error      string
+	ID         int64  `json:"id"`
+	CreatedAt  int64  `json:"createdAt"` // unix 秒
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     int    `json:"status"`
+	DurationMs int64  `json:"durationMs"`
+	Cached     bool   `json:"cached"`
+	Bypassed   bool   `json:"bypassed"`
+	ClientIP   string `json:"clientIp"`
+	Bytes      int64  `json:"bytes"`
+	Error      string `json:"error"`
 }
 
 // DashboardSummary 是仪表盘聚合数据。

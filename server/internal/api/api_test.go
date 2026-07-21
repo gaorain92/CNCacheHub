@@ -241,3 +241,50 @@ func TestHealthz_Api_NoDB(t *testing.T) {
 		t.Errorf("db = %v, want not_configured", body["db"])
 	}
 }
+
+// TestAccessLogRecord_JSON_CamelCase 回归测试：AccessLogRecord 的 JSON 字段必须
+// 是 camelCase（前端用 method/path/status/...），绝不能是 PascalCase（Go 默认）。
+//
+// 历史 bug：之前 AccessLogRecord 没 json tag，handler 序列化出 "Method"/"Path"/"Status"
+// 大写字段，前端读 log.method 拿不到值，UI 看起来"没东西"。
+func TestAccessLogRecord_JSON_CamelCase(t *testing.T) {
+	rec := AccessLogRecord{
+		Method:     "GET",
+		Path:       "/v2/library/nginx/blobs/sha256:abc",
+		Status:     200,
+		DurationMs: 123,
+		Cached:     true,
+		Bypassed:   false,
+		ClientIP:   "1.2.3.4",
+		Bytes:      1024,
+		Error:      "",
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	// 必须是小写 camelCase
+	for _, k := range []string{"method", "path", "status", "durationMs", "cached", "bypassed", "clientIp", "bytes", "error"} {
+		if _, ok := body[k]; !ok {
+			t.Errorf("expected camelCase key %q, got body=%s", k, string(b))
+		}
+	}
+	// 不能是 PascalCase（确认 PascalCase key 不存在）
+	for _, k := range []string{"Method", "Path", "Status", "DurationMs", "Cached", "Bypassed", "ClientIP", "Bytes", "Error"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("unexpected PascalCase key %q, body=%s", k, string(b))
+		}
+	}
+	// 验证值正确
+	if body["method"] != "GET" {
+		t.Errorf("method = %v, want GET", body["method"])
+	}
+	if body["status"] != float64(200) {
+		t.Errorf("status = %v, want 200", body["status"])
+	}
+}
