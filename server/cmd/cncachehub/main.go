@@ -185,6 +185,7 @@ func run() error {
 		ListRegistries:      makeListRegistriesAdapter(db),
 		SetRegistryEnabled: makeSetRegistryEnabledAdapter(db),
 		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
+		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

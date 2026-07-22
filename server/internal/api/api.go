@@ -261,6 +261,7 @@ func NewRouter(opts Options) http.Handler {
 		r.Post("/cleanup/tasks/{id}/dry-run", cleanupDryRunHandler(opts))
 		r.Get("/registries", registriesListHandler(opts))
 		r.Patch("/registries/{name}", registryPatchHandler(opts))
+		r.Post("/client-config", generateClientConfigHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

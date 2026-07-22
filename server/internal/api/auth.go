@@ -405,6 +405,7 @@ func requireAuth(opts Options) func(http.Handler) http.Handler {
 //   - /api/auth/login, /api/auth/logout, /api/auth/me
 //   - /api/auth/init, /api/auth/init-status（首次启动前）
 //   - /api/healthz, /api/version
+//   - /api/client-config (公开，daemon 拉配置)
 //   - /v2/* （registry 公开，PRD §9.7.2 独立按 IP/token 鉴权）
 //
 // 必须登录：
@@ -419,6 +420,7 @@ func needsAuth(path string) bool {
 		"/api/auth/init-status",
 		"/api/healthz",
 		"/api/version",
+		"/api/client-config",
 	} {
 		if p == path {
 			return false
