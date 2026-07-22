@@ -18,6 +18,18 @@ function statusType(status: number): 'success' | 'warning' | 'danger' | 'info' {
   return 'success'
 }
 
+// 命中状态 tag：HIT / BYPASS 细分（PRD §9.6.4 BYPASS_SIZE_LIMIT）
+function bypassLabel(reason: string): string {
+  if (reason === 'size_limit') return 'BYPASS_SIZE_LIMIT'
+  if (reason === 'disk_low') return 'BYPASS_DISK_LOW'
+  return 'BYPASS'
+}
+
+function bypassType(reason: string): 'warning' | 'danger' {
+  // size_limit 黄色（可恢复），disk_low 红色（磁盘问题）
+  return reason === 'disk_low' ? 'danger' : 'warning'
+}
+
 function shortPath(p: string): string {
   if (p.length <= 60) return p
   return p.slice(0, 30) + '…' + p.slice(-25)
@@ -49,8 +61,8 @@ function formatDuration(ms: number): string {
       加载失败：{{ logs.errorMessage }}
     </div>
 
-    <div class="rounded-2xl border border-white/[.08] bg-black/20 overflow-hidden">
-      <table class="w-full text-sm">
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 overflow-x-auto">
+      <table class="w-full text-sm min-w-[800px]">
         <thead class="text-xs text-slate-500 border-b border-white/[.06]">
           <tr>
             <th class="text-left px-4 py-3 font-medium">方法</th>
@@ -78,8 +90,15 @@ function formatDuration(ms: number): string {
               {{ formatBytes(item.bytes) }}
             </td>
             <td class="px-4 py-2">
-              <el-tag v-if="item.cached" type="success" size="small">HIT</el-tag>
-              <el-tag v-else-if="item.bypassed" type="warning" size="small">BYPASS</el-tag>
+              <el-tag v-if="item.cached" type="success" size="small" effect="dark">HIT</el-tag>
+              <el-tag
+                v-else-if="item.bypassed"
+                :type="bypassType(item.bypassReason)"
+                size="small"
+                effect="dark"
+              >
+                {{ bypassLabel(item.bypassReason) }}
+              </el-tag>
               <el-tag v-else size="small" effect="plain">MISS</el-tag>
             </td>
             <td class="px-4 py-2 text-xs text-slate-500 font-mono">{{ item.clientIp }}</td>

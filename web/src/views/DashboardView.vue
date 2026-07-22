@@ -40,8 +40,8 @@ const welcomeSubtitle = computed(() => {
     return '已连接 CNCacheHub 后端，可查看实时命中率、上游状态与请求日志。'
   }
   return health.errorMessage
-    ? `未能访问后端 API：${health.errorMessage}。请确认 server 已启动并暴露在 :8080。`
-    : '请确认后端服务已启动在 :8080（开发模式由 Vite 代理转发 /api）。'
+    ? `未能访问后端 API：${health.errorMessage}。请确认 server 进程已启动。`
+    : '请确认后端服务已启动（生产端口 8082，开发模式由 Vite 代理转发 /api）。'
 })
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -169,7 +169,7 @@ async function refresh(): Promise<void> {
       >
         <el-icon :size="22" color="#94a3b8" class="mb-2 group-hover:text-mint"><Lightning /></el-icon>
         <div class="text-sm font-medium">缓存管理</div>
-        <div class="text-xs text-slate-500 mt-1">条目浏览 · 手动清理（Phase 1.2）</div>
+        <div class="text-xs text-slate-500 mt-1">条目浏览 · LRU/容量清理 · 删除</div>
       </router-link>
     </div>
   </section>

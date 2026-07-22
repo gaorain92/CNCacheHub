@@ -22,6 +22,9 @@ interface NavItem {
   badge?: string
 }
 
+const props = defineProps<{ embedded?: boolean }>()
+const emit = defineEmits<{ navigate: [] }>()
+
 const route = useRoute()
 const router = useRouter()
 
@@ -41,13 +44,18 @@ const activeName = computed(() => route.name)
 
 function go(item: NavItem): void {
   router.push(item.path)
+  emit('navigate')
 }
+
+const asideClass = computed(() =>
+  props.embedded
+    ? 'w-full h-full glass rounded-none p-5 flex flex-col'
+    : 'fixed left-5 top-5 bottom-5 w-[17.5rem] glass rounded-[2rem] p-5 flex flex-col z-20'
+)
 </script>
 
 <template>
-  <aside
-    class="fixed left-5 top-5 bottom-5 w-[17.5rem] glass rounded-[2rem] p-5 flex flex-col z-20"
-  >
+  <aside :class="asideClass">
     <!-- Logo -->
     <router-link
       to="/dashboard"
@@ -87,34 +95,16 @@ function go(item: NavItem): void {
       </button>
     </nav>
 
-    <!-- Footer actions -->
-    <div class="mt-4 space-y-3">
-      <div
-        class="rounded-3xl border border-mint/20 bg-mint/10 p-4"
-      >
+    <!-- Footer: model status -->
+    <div class="mt-4">
+      <div class="rounded-3xl border border-mint/20 bg-mint/10 p-4">
         <div class="flex items-center gap-2 text-sm font-medium text-mint">
           <span class="dot bg-mint animate-pulse" />
-          公网安全提醒
+          单 VPS 自托管模式
         </div>
         <p class="mt-2 text-xs leading-5 text-slate-300">
-          代理入口已开启 IP 白名单，Docker 只读 Token 已启用。
+          默认白名单代理（不开放任意 URL）。缓存上限与系统保底空间可在「系统设置」中调整。
         </p>
-      </div>
-      <div class="grid grid-cols-2 gap-2 text-xs">
-        <button
-          type="button"
-          class="btn rounded-2xl bg-white/[.05] px-3 py-2 text-slate-300 hover:bg-white/[.08] transition"
-          disabled
-        >
-          初始化预览
-        </button>
-        <button
-          type="button"
-          class="btn rounded-2xl bg-white/[.05] px-3 py-2 text-slate-300 hover:bg-white/[.08] transition"
-          disabled
-        >
-          登录页
-        </button>
       </div>
     </div>
   </aside>

@@ -192,8 +192,8 @@ async function runCleanup(t: CleanupTask): Promise<void> {
       </div>
     </div>
 
-    <div class="rounded-2xl border border-white/[.08] bg-black/20 overflow-hidden">
-      <table class="w-full text-sm">
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 overflow-x-auto">
+      <table class="w-full text-sm min-w-[1000px]">
         <thead class="text-xs text-slate-500 border-b border-white/[.06]">
           <tr>
             <th class="text-left px-4 py-3 font-medium">ID</th>

@@ -54,6 +54,7 @@ export interface AccessLogItem {
   durationMs: number
   cached: boolean
   bypassed: boolean
+  bypassReason: string // PRD §9.6.4: 'size_limit' | 'disk_low' | ''
   clientIp: string
   bytes: number
   error: string

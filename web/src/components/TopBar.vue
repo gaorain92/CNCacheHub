@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, Lightning, MagicStick, Search, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowDown, Edit, Lightning, MagicStick, Search, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import StatusDot from './StatusDot.vue'
+import ChangePasswordDialog from './ChangePasswordDialog.vue'
 import { useHealthStore } from '@/stores/health'
 import { useAuthStore } from '@/stores/auth'
 
@@ -13,9 +14,16 @@ const router = useRouter()
 const health = useHealthStore()
 const auth = useAuthStore()
 
+const showChangePwd = ref(false)
+
 const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? 'CNCacheHub')
 
-const envLabel = computed(() => '开发环境 / 本机节点')
+// 当前节点：用 window.location.host（不带端口），无 host 则降级到「默认节点」
+const envLabel = computed(() => {
+  if (typeof window === 'undefined') return '默认节点'
+  const host = window.location.hostname || '默认节点'
+  return `当前节点 · ${host}`
+})
 
 const dotStatus = computed(() => {
   if (health.loading && health.lastCheckedAt === 0) return 'unknown' as const
@@ -46,6 +54,11 @@ async function handleLogout(): Promise<void> {
   await auth.logout()
   ElMessage.success('已登出')
   router.replace('/login')
+}
+
+function onUserCommand(c: string): void {
+  if (c === 'logout') handleLogout()
+  if (c === 'change-password') showChangePwd.value = true
 }
 </script>
 
@@ -91,7 +104,7 @@ async function handleLogout(): Promise<void> {
       </button>
 
       <!-- 用户菜单 -->
-      <el-dropdown trigger="click" @command="(c: string) => c === 'logout' && handleLogout()">
+      <el-dropdown trigger="click" @command="onUserCommand">
         <button
           type="button"
           class="btn rounded-2xl bg-white/[.06] px-3 py-2 text-sm hover:bg-white/[.10] transition flex items-center gap-2"
@@ -109,7 +122,11 @@ async function handleLogout(): Promise<void> {
                 {{ auth.user?.isAdmin ? '管理员' : '普通用户' }} · {{ auth.username }}
               </span>
             </el-dropdown-item>
-            <el-dropdown-item divided command="logout">
+            <el-dropdown-item divided command="change-password">
+              <el-icon :size="14"><Edit /></el-icon>
+              修改密码
+            </el-dropdown-item>
+            <el-dropdown-item command="logout">
               <el-icon :size="14"><SwitchButton /></el-icon>
               登出
             </el-dropdown-item>
@@ -118,4 +135,6 @@ async function handleLogout(): Promise<void> {
       </el-dropdown>
     </div>
   </header>
+
+  <ChangePasswordDialog v-model="showChangePwd" />
 </template>

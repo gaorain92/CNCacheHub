@@ -16,7 +16,7 @@ function goHome(): void {
       </div>
       <h2 class="mt-4 text-2xl font-semibold">页面未找到</h2>
       <p class="mt-2 text-sm text-slate-400">
-        你访问的路径不存在，或者还在 Phase 1+ 才能开放。
+        你访问的路径不存在，或对应功能尚未开放。
       </p>
       <button
         type="button"
