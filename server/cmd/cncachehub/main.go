@@ -34,6 +34,7 @@ import (
 	"github.com/cncachehub/server/internal/api"
 	"github.com/cncachehub/server/internal/cache"
 	"github.com/cncachehub/server/internal/config"
+	dnsserver "github.com/cncachehub/server/internal/dns"
 	logpkg "github.com/cncachehub/server/internal/log"
 	"github.com/cncachehub/server/internal/proxy"
 	"github.com/cncachehub/server/internal/storage"
@@ -149,7 +150,29 @@ func run() error {
 	// 5d. 启 session cleanup goroutine（每小时清过期 session）。
 	go runSessionCleanup(rootCtx, db)
 
-	// 5e. 检查是否首次启动（无 admin），提醒用户初始化。
+	// 5e. 启 SteamCMD DNS 启动器（PRD §9.3）。从 DB 读配置；cfg 默认关。
+	dnsSrv := dnsserver.NewServer(dnsserver.Config{
+		Enabled:     false,
+		ListenAddr:  "0.0.0.0:5353",
+		Upstream:    "1.1.1.1:53",
+		AnswerIP:    "127.0.0.1",
+		DomainRules: []string{"*.steamcontent.com", "*.steamstatic.com", "client-download.steampowered.com"},
+	}, logpkg.L())
+	if dnsCfg, err := db.GetDNSConfig(rootCtx); err == nil {
+		// 启动时 Reload（按 DB 配置决定 enabled / 端口 / 上游 / 答案 IP / 规则）
+		if rerr := dnsSrv.Reload(rootCtx, dnsserver.Config{
+			Enabled:     dnsCfg.Enabled,
+			ListenAddr:  dnsCfg.ListenAddr,
+			Upstream:    dnsCfg.Upstream,
+			AnswerIP:    dnsCfg.AnswerIP,
+			DomainRules: dnsCfg.DomainRules,
+			UpdatedAt:   time.Unix(dnsCfg.UpdatedAt, 0),
+		}); rerr != nil {
+			logpkg.Warn("dns server initial reload failed", "err", rerr)
+		}
+	}
+
+	// 5f. 检查是否首次启动（无 admin），提醒用户初始化。
 	if n, _ := db.CountUsers(rootCtx); n == 0 {
 		logpkg.Warn("no admin user — visit /login to run initialization wizard",
 			"hint", "GET /api/auth/init-status, then POST /api/auth/init",
@@ -185,6 +208,11 @@ func run() error {
 		ListRegistries:      makeListRegistriesAdapter(db),
 		SetRegistryEnabled: makeSetRegistryEnabledAdapter(db),
 		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
+		// SteamCMD DNS 启动器（PRD §9.3）— 构造 server 实例
+		GetDNSConfig:       makeGetDNSConfigAdapter(db),
+		UpdateDNSConfig:    makeUpdateDNSConfigAdapter(db),
+		DNSServer:          dnsSrv,
+		SessionUserRole:    makeSessionUserRoleAdapter(db),
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
@@ -226,6 +254,10 @@ func run() error {
 		return fmt.Errorf("http shutdown: %w", err)
 	}
 	logpkg.Info("http server stopped")
+	// 关 DNS server
+	if err := dnsSrv.Stop(); err != nil {
+		logpkg.Warn("dns server stop", "err", err)
+	}
 	return nil
 }
 
@@ -1048,5 +1080,43 @@ func makeListAccessLogsAdapter(db *storage.DB) func(ctx context.Context, page, p
 			})
 		}
 		return out, total, nil
+	}
+}
+
+// makeGetDNSConfigAdapter 返回 DB 的 dns_config 读 closure。
+func makeGetDNSConfigAdapter(db *storage.DB) func(ctx context.Context) (storage.DNSConfig, error) {
+	return func(ctx context.Context) (storage.DNSConfig, error) {
+		return db.GetDNSConfig(ctx)
+	}
+}
+
+// makeUpdateDNSConfigAdapter 返回 DB 的 dns_config 写 closure。
+func makeUpdateDNSConfigAdapter(db *storage.DB) func(ctx context.Context, patch storage.DNSConfigPatch) (storage.DNSConfig, error) {
+	return func(ctx context.Context, patch storage.DNSConfigPatch) (storage.DNSConfig, error) {
+		return db.UpdateDNSConfig(ctx, patch)
+	}
+}
+
+// makeSessionUserRoleAdapter 从 cookie 拿 session token → user role。
+// 返回 (role, userID, error)；未登录返回 ("", 0, nil)。
+func makeSessionUserRoleAdapter(db *storage.DB) func(ctx context.Context, r *http.Request) (string, int64, error) {
+	return func(ctx context.Context, r *http.Request) (string, int64, error) {
+		c, err := r.Cookie("cnsid")
+		if err != nil || c.Value == "" {
+			return "", 0, nil
+		}
+		sess, err := db.GetSession(ctx, c.Value)
+		if err != nil {
+			return "", 0, nil
+		}
+		u, err := db.GetUserByID(ctx, sess.UserID)
+		if err != nil {
+			return "", 0, err
+		}
+		role := "user"
+		if u.IsAdmin {
+			role = "admin"
+		}
+		return role, u.ID, nil
 	}
 }

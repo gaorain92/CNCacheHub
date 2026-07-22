@@ -24,6 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	dnsserver "github.com/cncachehub/server/internal/dns"
+	"github.com/cncachehub/server/internal/storage"
+
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
@@ -99,7 +102,16 @@ type Options struct {
 	SetRegistryEnabled func(ctx context.Context, name string, enabled bool) error
 	// AuthDB 鉴权后端（PRD §9.7.1）。nil 时不要求登录（开发模式）。
 	AuthDB AuthDB
+	// SessionUserRole 返回当前 session 用户的角色（"admin"/"user"/""）。nil = 未登录。
+	SessionUserRole func(ctx context.Context, r *http.Request) (string, int64, error)
+	// GetDNSConfig 拿 DNS 启动器配置（PRD §9.3）。
+	GetDNSConfig func(ctx context.Context) (storage.DNSConfig, error)
+	// UpdateDNSConfig 改 DNS 启动器配置。
+	UpdateDNSConfig func(ctx context.Context, patch storage.DNSConfigPatch) (storage.DNSConfig, error)
+	// DNSServer 内置 mini DNS server 实例（PRD §9.3）。
+	DNSServer *dnsserver.Server
 }
+
 
 // Upstream 是 /api/docker/upstreams 返回的列表项。
 type Upstream struct {
@@ -263,6 +275,12 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/registries", registriesListHandler(opts))
 		r.Patch("/registries/{name}", registryPatchHandler(opts))
 		r.Post("/client-config", generateClientConfigHandler(opts))
+		// SteamCMD DNS 启动器（PRD §9.3）
+		r.Get("/dns/config", dnsConfigGetHandler(opts))
+		r.Patch("/dns/config", dnsConfigPatchHandler(opts))
+		r.Get("/dns/stats", dnsStatsHandler(opts))
+		r.Get("/dns/test", dnsTestHandler(opts))
+		r.Post("/dns/test", dnsTestHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

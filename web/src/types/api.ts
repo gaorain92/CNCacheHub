@@ -163,3 +163,56 @@ export interface UpstreamHealth {
   error?: string
   lastChecked: number
 }
+
+// === SteamCMD DNS 启动器（PRD §9.3） ===
+
+export interface DNSConfig {
+  id: number
+  enabled: boolean
+  listenAddr: string
+  upstream: string
+  answerIp: string
+  domainRules: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface DNSStats {
+  totalQueries: number
+  hitQueries: number
+  missQueries: number
+  blockedQueries: number
+  lastQueryAt: number // unix seconds, 0 = never
+  lastError: string
+}
+
+export interface DNSConfigResponse {
+  config: DNSConfig
+  stats: DNSStats
+  listening: boolean
+}
+
+export interface DNSConfigPatch {
+  enabled?: boolean
+  listenAddr?: string
+  upstream?: string
+  answerIp?: string
+  domainRules?: string[]
+}
+
+export interface DNSTestAnswer {
+  name: string
+  type: number
+  ttl: number
+  data: string
+}
+
+export interface DNSTestResponse {
+  domain: string
+  matched: boolean
+  server: string
+  rcode: string
+  answers: DNSTestAnswer[]
+  latencyMs: number
+  error?: string
+}
