@@ -1035,15 +1035,16 @@ func makeListAccessLogsAdapter(db *storage.DB) func(ctx context.Context, page, p
 		out := make([]api.AccessLogRecord, 0, len(rows))
 		for _, r := range rows {
 			out = append(out, api.AccessLogRecord{
-				Method:     r.Method,
-				Path:       r.Path,
-				Status:     r.Status,
-				DurationMs: r.DurationMs,
-				Cached:     r.Cached,
-				Bypassed:   r.Bypassed,
-				ClientIP:   r.ClientIP,
-				Bytes:      r.Bytes,
-				Error:      r.Error,
+				Method:       r.Method,
+				Path:         r.Path,
+				Status:       r.Status,
+				DurationMs:   r.DurationMs,
+				Cached:       r.Cached,
+				Bypassed:     r.Bypassed,
+				BypassReason: r.BypassReason,
+				ClientIP:     r.ClientIP,
+				Bytes:        r.Bytes,
+				Error:        r.Error,
 			})
 		}
 		return out, total, nil

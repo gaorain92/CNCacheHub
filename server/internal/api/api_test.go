@@ -249,15 +249,16 @@ func TestHealthz_Api_NoDB(t *testing.T) {
 // 大写字段，前端读 log.method 拿不到值，UI 看起来"没东西"。
 func TestAccessLogRecord_JSON_CamelCase(t *testing.T) {
 	rec := AccessLogRecord{
-		Method:     "GET",
-		Path:       "/v2/library/nginx/blobs/sha256:abc",
-		Status:     200,
-		DurationMs: 123,
-		Cached:     true,
-		Bypassed:   false,
-		ClientIP:   "1.2.3.4",
-		Bytes:      1024,
-		Error:      "",
+		Method:       "GET",
+		Path:         "/v2/library/nginx/blobs/sha256:abc",
+		Status:       200,
+		DurationMs:   123,
+		Cached:       true,
+		Bypassed:     false,
+		BypassReason: "size_limit",
+		ClientIP:     "1.2.3.4",
+		Bytes:        1024,
+		Error:        "",
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -269,13 +270,13 @@ func TestAccessLogRecord_JSON_CamelCase(t *testing.T) {
 	}
 
 	// 必须是小写 camelCase
-	for _, k := range []string{"method", "path", "status", "durationMs", "cached", "bypassed", "clientIp", "bytes", "error"} {
+	for _, k := range []string{"method", "path", "status", "durationMs", "cached", "bypassed", "bypassReason", "clientIp", "bytes", "error"} {
 		if _, ok := body[k]; !ok {
 			t.Errorf("expected camelCase key %q, got body=%s", k, string(b))
 		}
 	}
 	// 不能是 PascalCase（确认 PascalCase key 不存在）
-	for _, k := range []string{"Method", "Path", "Status", "DurationMs", "Cached", "Bypassed", "ClientIP", "Bytes", "Error"} {
+	for _, k := range []string{"Method", "Path", "Status", "DurationMs", "Cached", "Bypassed", "BypassReason", "ClientIP", "Bytes", "Error"} {
 		if _, ok := body[k]; ok {
 			t.Errorf("unexpected PascalCase key %q, body=%s", k, string(b))
 		}
@@ -286,5 +287,8 @@ func TestAccessLogRecord_JSON_CamelCase(t *testing.T) {
 	}
 	if body["status"] != float64(200) {
 		t.Errorf("status = %v, want 200", body["status"])
+	}
+	if body["bypassReason"] != "size_limit" {
+		t.Errorf("bypassReason = %v, want size_limit", body["bypassReason"])
 	}
 }

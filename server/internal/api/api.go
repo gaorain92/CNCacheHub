@@ -43,15 +43,16 @@ type BuildInfo struct {
 // api 包不直接 import storage（避免循环），所以这里独立定义 record 类型。
 // main.go 注入 AccessLogWriter 时负责转换。
 type AccessLogRecord struct {
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMs int64  `json:"durationMs"`
-	Cached     bool   `json:"cached"`
-	Bypassed   bool   `json:"bypassed"`
-	ClientIP   string `json:"clientIp"`
-	Bytes      int64  `json:"bytes"`
-	Error      string `json:"error"`
+	Method       string `json:"method"`
+	Path         string `json:"path"`
+	Status       int    `json:"status"`
+	DurationMs   int64  `json:"durationMs"`
+	Cached       bool   `json:"cached"`
+	Bypassed     bool   `json:"bypassed"`
+	BypassReason string `json:"bypassReason"` // PRD §9.6.4: size_limit / disk_low / ''
+	ClientIP     string `json:"clientIp"`
+	Bytes        int64  `json:"bytes"`
+	Error        string `json:"error"`
 }
 
 // AccessLogWriter 把访问日志异步落盘（由 main.go 注入，连接 storage.DB）。
