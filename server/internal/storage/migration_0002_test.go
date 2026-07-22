@@ -73,8 +73,9 @@ func TestOpen_RegistryUpstreamsSeed(t *testing.T) {
 	if upURL != "https://registry-1.docker.io" {
 		t.Errorf("upstream_url = %q, want https://registry-1.docker.io", upURL)
 	}
-	if mirror != "/v2" {
-		t.Errorf("mirror_path = %q, want /v2", mirror)
+	if mirror != "" {
+		// 0009 把 dockerhub.mirror_path 改写成 "" 表示"默认 upstream"
+		t.Errorf("mirror_path = %q, want empty (0009 changes dockerhub to default)", mirror)
 	}
 	if enabled != 1 {
 		t.Errorf("enabled = %d, want 1", enabled)

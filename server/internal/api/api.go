@@ -92,6 +92,10 @@ type Options struct {
 	UpdateSettings func(ctx context.Context, patch SettingsPatch, userID int64) (SystemSettings, error)
 	// DryRunCleanup 跑一次清理预估（不实际删除）。
 	DryRunCleanup func(ctx context.Context, taskID int64) (CleanupReport, error)
+	// ListRegistries 列出所有 registry upstreams。
+	ListRegistries func(ctx context.Context) ([]Registry, error)
+	// SetRegistryEnabled 启停 registry upstream。
+	SetRegistryEnabled func(ctx context.Context, name string, enabled bool) error
 	// AuthDB 鉴权后端（PRD §9.7.1）。nil 时不要求登录（开发模式）。
 	AuthDB AuthDB
 }
@@ -195,6 +199,21 @@ type SettingsPatch struct {
 	CleanupTargetPct  *int  `json:"cleanupTargetPct,omitempty"`
 }
 
+// Registry 是 /api/registries 列表项（PRD §9.2.2）。
+type Registry struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	UpstreamURL string `json:"upstreamUrl"`
+	MirrorPath  string `json:"mirrorPath"`
+	Enabled     bool   `json:"enabled"`
+	CreatedAt   int64  `json:"createdAt"`
+}
+
+// RegistryPatch 是 PATCH /api/registries/:name 入参。
+type RegistryPatch struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
 // NewRouter 构造配置好的 chi 路由。
 //
 // 返回的 Router 已经是中间件齐备的实例，可以直接挂到 http.Server。
@@ -240,6 +259,8 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/settings", settingsGetHandler(opts))
 		r.Patch("/settings", settingsPatchHandler(opts))
 		r.Post("/cleanup/tasks/{id}/dry-run", cleanupDryRunHandler(opts))
+		r.Get("/registries", registriesListHandler(opts))
+		r.Patch("/registries/{name}", registryPatchHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

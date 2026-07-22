@@ -16,14 +16,14 @@ import (
 	"github.com/cncachehub/server/internal/storage"
 )
 
-// Proxy 持有缓存 + 上游 + 日志依赖，实现 http.Handler。
+// Proxy 持有缓存 + 上游池 + 日志依赖，实现 http.Handler。
 //
 // 线程安全：所有字段只读，多 goroutine 并发 ServeHTTP 安全。
 type Proxy struct {
-	Cache     cache.Store
-	Upstream  *Upstream
+	Cache    cache.Store
+	Upstream *UpstreamPool
 	AccessLog chan<- AccessLog // 注入：非 nil 时异步记日志
-	Logger    *slog.Logger
+	Logger   *slog.Logger
 
 	// MetaWriter 写 cache_entries 元数据（可选；nil 时不写）。
 	// 接口而非 *storage.DB，避免 proxy → storage 反向依赖。
@@ -39,7 +39,7 @@ type MetaWriter interface {
 }
 
 // New 构造 Proxy。
-func New(c cache.Store, u *Upstream, accessLog chan<- AccessLog, meta MetaWriter) *Proxy {
+func New(c cache.Store, u *UpstreamPool, accessLog chan<- AccessLog, meta MetaWriter) *Proxy {
 	return &Proxy{
 		Cache:     c,
 		Upstream:  u,
@@ -83,12 +83,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 解析 /v2/<name>/{manifests,blobs}/<ref>
+	// 解析 /v2/<registry>/<repo>/{manifests,blobs}/<ref>
 	//
-	// name 可以含 /（如 library/nginx、bitnami/postgresql），kind 和 ref 不含。
-	// 用 /manifests/ 和 /blobs/ 作分隔符切。
+	// 多 Registry 模式：首段是注册过的 registry key（dockerhub/ghcr/quay/k8s）。
+	// 兼容老 daemon 形式：/v2/<repo>/...  首段可能直接是 library/nginx
+	// （被解析为 unknown registry → fallback 到 dockerhub）。
 	rest := strings.TrimPrefix(path, "/v2/")
 	rest = strings.TrimPrefix(rest, "/")
+
+	registry, rest := p.splitRegistry(rest)
 
 	var name, kind, ref string
 	if idx := strings.Index(rest, "/manifests/"); idx > 0 {
@@ -100,35 +103,91 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		kind = "blobs"
 		ref = rest[idx+len("/blobs/"):]
 	} else {
-		// 未知路径：透传上游
-		p.passthrough(ctx, w, r, path, &entry)
+		// 未知路径：透传到对应 upstream
+		upPath := "/v2/" + rest
+		_, up := p.Upstream.resolveUpstream(registry)
+		if up == nil {
+			entry.Status = http.StatusBadGateway
+			http.Error(w, "no upstream available", http.StatusBadGateway)
+			return
+		}
+		status, n, err := up.RoundTrip(ctx, w, r.Method, upPath, r.Header)
+		entry.Status = status
+		entry.Bytes = n
+		if err != nil {
+			entry.Error = err.Error()
+		}
 		return
 	}
 	name = libraryRewrite(name)
 
 	switch kind {
 	case "manifests":
-		// Phase 1 manifest 直接透传（不落盘）；以后加 TeeReader 缓存
+		_, up := p.Upstream.resolveUpstream(registry)
+		if up == nil {
+			entry.Status = http.StatusBadGateway
+			http.Error(w, "no upstream available for registry "+registry, http.StatusBadGateway)
+			return
+		}
+		// 去掉 upstream 前缀（如 ghcr 上游的 /v2/<repo> 形式）
 		upPath := "/v2/" + name + "/manifests/" + ref
-		status, n, err := p.Upstream.RoundTrip(ctx, w, r.Method, upPath, r.Header)
+		status, n, err := up.RoundTrip(ctx, w, r.Method, upPath, r.Header)
 		entry.Status = status
 		entry.Bytes = n
 		if err != nil {
 			entry.Error = err.Error()
 		}
-		_ = name
 
 	case "blobs":
-		p.handleBlob(ctx, w, r, name, ref, &entry)
+		p.handleBlob(ctx, w, r, registry, name, ref, &entry)
 
 	default:
-		p.passthrough(ctx, w, r, path, &entry)
+		upPath := "/v2/" + rest
+		_, up := p.Upstream.resolveUpstream(registry)
+		if up == nil {
+			entry.Status = http.StatusBadGateway
+			http.Error(w, "no upstream", http.StatusBadGateway)
+			return
+		}
+		status, n, err := up.RoundTrip(ctx, w, r.Method, upPath, r.Header)
+		entry.Status = status
+		entry.Bytes = n
+		if err != nil {
+			entry.Error = err.Error()
+		}
 	}
 }
 
-// passthrough 通用透传。
-func (p *Proxy) passthrough(ctx context.Context, w http.ResponseWriter, r *http.Request, path string, entry *AccessLog) {
-	status, n, err := p.Upstream.RoundTrip(ctx, w, r.Method, path, r.Header)
+// splitRegistry 按 pool 注册表切首段。
+//
+// 命中（首段是注册过的 registry 如 "ghcr"/"quay"/"k8s"/"dockerhub"）：
+//   registry = 首段, rest = 剩余
+// 未命中（如 /v2/library/...，daemon 旧形式；fallback 不算命中）：
+//   registry = "dockerhub"（fallback）, rest = 完整 path
+func (p *Proxy) splitRegistry(rest string) (string, string) {
+	if rest == "" {
+		return "dockerhub", ""
+	}
+	idx := strings.Index(rest, "/")
+	firstSeg := rest
+	if idx > 0 {
+		firstSeg = rest[:idx]
+	}
+	// 用 hasUpstream 区分显式注册 vs fallback
+	if p.Upstream.hasUpstream(firstSeg) {
+		return firstSeg, rest[idx+1:]
+	}
+	return "dockerhub", rest
+}
+
+// passthrough 通用透传到指定 upstream。
+func (p *Proxy) passthrough(ctx context.Context, w http.ResponseWriter, r *http.Request, up *Upstream, path string, entry *AccessLog) {
+	if up == nil {
+		entry.Status = http.StatusBadGateway
+		http.Error(w, "no upstream available", http.StatusBadGateway)
+		return
+	}
+	status, n, err := up.RoundTrip(ctx, w, r.Method, path, r.Header)
 	entry.Status = status
 	entry.Bytes = n
 	if err != nil {
@@ -140,8 +199,18 @@ func (p *Proxy) passthrough(ctx context.Context, w http.ResponseWriter, r *http.
 //
 // HEAD → 本地 stat（不转上游，HEAD 体很小，本地查就够了）
 // GET  → 命中直接流式返回；未命中走 upstream 流式下载 + 异步落盘
-func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, name, digest string, entry *AccessLog) {
-	registry := "dockerhub" // Phase 1 写死；Phase 2 从 path 前缀推
+//
+// registry 参数从 path 推断（dockerhub/ghcr/quay/k8s），写到 cache_entries.registry。
+func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, registry, name, digest string, entry *AccessLog) {
+	if registry == "" {
+		registry = "dockerhub"
+	}
+	_, up := p.Upstream.resolveUpstream(registry)
+	if up == nil {
+		entry.Status = http.StatusBadGateway
+		http.Error(w, "no upstream for registry "+registry, http.StatusBadGateway)
+		return
+	}
 
 	switch r.Method {
 	case http.MethodHead:
@@ -206,7 +275,7 @@ func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.R
 
 		// 2) 未命中：上游流式下载 + 异步落盘
 		upPath := "/v2/" + name + "/blobs/" + digest
-		status, n, bypassedReason, err := p.fetchAndCache(ctx, w, r, upPath, registry, name, digest)
+		status, n, bypassedReason, err := p.fetchAndCache(ctx, w, r, up, upPath, registry, name, digest)
 		entry.Status = status
 		entry.Bytes = n
 		entry.Bypassed = bypassedReason
@@ -227,25 +296,25 @@ func (p *Proxy) handleBlob(ctx context.Context, w http.ResponseWriter, r *http.R
 // fetchAndCache 拉上游 blob，同时落盘 + 转发给客户端。
 //
 // 流程：
-//   1) 用 Upstream 客户端发起请求（带 token dance：401 时自动拿 token 重试）；
+//   1) 用 *Upstream 客户端发起请求（带 token dance：401 时自动拿 token 重试）；
 //   2) 拿到 resp 后：
 //      - status != 200：直接转发 body 给客户端，不缓存；
 //      - status == 200：tee 写到 client + cache stream。
 func (p *Proxy) fetchAndCache(
 	_ context.Context, w http.ResponseWriter, r *http.Request,
-	upPath, registry, name, digest string,
+	up *Upstream, upPath, registry, name, digest string,
 ) (int, int64, cache.BypassReason, error) {
 	ctx := r.Context()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Upstream.baseURL+upPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, up.baseURL+upPath, nil)
 	if err != nil {
 		writeUpstreamError(w, "upstream build request: "+err.Error())
 		return http.StatusBadGateway, 0, cache.BypassNone, err
 	}
 	copyRequestHeaders(req.Header, r.Header)
-	req.Header.Set("User-Agent", p.Upstream.ua)
+	req.Header.Set("User-Agent", up.ua)
 
 	// 第一次请求（不带 token）
-	resp, err := p.Upstream.hc.Do(req)
+	resp, err := up.hc.Do(req)
 	if err != nil {
 		writeUpstreamError(w, "upstream do: "+err.Error())
 		return http.StatusBadGateway, 0, cache.BypassNone, err
@@ -260,21 +329,21 @@ func (p *Proxy) fetchAndCache(
 			writeUpstreamError(w, "parse Www-Authenticate: "+perr.Error())
 			return http.StatusBadGateway, 0, cache.BypassNone, perr
 		}
-		token, terr := p.Upstream.fetchToken(ctx, realm, service, scope)
+		token, terr := up.fetchToken(ctx, realm, service, scope)
 		if terr != nil {
 			writeUpstreamError(w, "fetch token: "+terr.Error())
 			return http.StatusBadGateway, 0, cache.BypassNone, terr
 		}
 		// 重试
-		req2, err2 := http.NewRequestWithContext(ctx, http.MethodGet, p.Upstream.baseURL+upPath, nil)
+		req2, err2 := http.NewRequestWithContext(ctx, http.MethodGet, up.baseURL+upPath, nil)
 		if err2 != nil {
 			writeUpstreamError(w, "upstream build retry: "+err2.Error())
 			return http.StatusBadGateway, 0, cache.BypassNone, err2
 		}
 		copyRequestHeaders(req2.Header, r.Header)
-		req2.Header.Set("User-Agent", p.Upstream.ua)
+		req2.Header.Set("User-Agent", up.ua)
 		req2.Header.Set("Authorization", "Bearer "+token)
-		resp, err = p.Upstream.hc.Do(req2)
+		resp, err = up.hc.Do(req2)
 		if err != nil {
 			writeUpstreamError(w, "upstream retry: "+err.Error())
 			return http.StatusBadGateway, 0, cache.BypassNone, err

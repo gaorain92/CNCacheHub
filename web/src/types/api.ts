@@ -89,6 +89,23 @@ export interface SettingsPatch {
   cleanupTargetPct?: number
 }
 
+// ============================================================================
+// Registry Upstreams (PRD §9.2.2)
+// ============================================================================
+
+export interface Registry {
+  id: number
+  name: string
+  upstreamUrl: string
+  mirrorPath: string
+  enabled: boolean
+  createdAt: number
+}
+
+export interface RegistryPatch {
+  enabled: boolean
+}
+
 export interface CacheEntry {
   id: number
   registry: string

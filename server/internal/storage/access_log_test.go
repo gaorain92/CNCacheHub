@@ -155,8 +155,8 @@ func TestDashboardSummary_Empty(t *testing.T) {
 	if s.CacheEntries != 0 {
 		t.Errorf("CacheEntries = %d, want 0", s.CacheEntries)
 	}
-	if s.ActiveUpstreams != 1 {
-		t.Errorf("ActiveUpstreams = %d, want 1 (seed dockerhub)", s.ActiveUpstreams)
+	if s.ActiveUpstreams != 4 {
+		t.Errorf("ActiveUpstreams = %d, want 4 (dockerhub+ghcr+quay+k8s)", s.ActiveUpstreams)
 	}
 	if s.GeneratedAt == 0 {
 		t.Errorf("GeneratedAt = 0")
@@ -233,8 +233,9 @@ func TestListEnabledUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEnabledUpstreams: %v", err)
 	}
-	if len(ups) != 1 {
-		t.Fatalf("len = %d, want 1", len(ups))
+	// 0002 seed dockerhub + 0009 seed ghcr/quay/k8s = 4 条
+	if len(ups) != 4 {
+		t.Fatalf("len = %d, want 4 (dockerhub + ghcr + quay + k8s)", len(ups))
 	}
 	u := ups[0]
 	if u.Name != "dockerhub" {

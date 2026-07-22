@@ -124,14 +124,11 @@ func run() error {
 		"reserve_space_gb", reserveGB,
 	)
 
-	up, err := proxy.NewUpstream(proxy.UpstreamOptions{
-		BaseURL: cfg.UpstreamRegistry,
-		Timeout: cfg.UpstreamTimeout,
-		UA:      fmt.Sprintf("cncachehub/%s", version),
-	})
+	up, err := proxy.NewUpstreamPool(buildUpstreamPoolEntries(db, &cfg, version))
 	if err != nil {
-		return fmt.Errorf("init upstream: %w", err)
+		return fmt.Errorf("init upstream pool: %w", err)
 	}
+	logpkg.Info("upstream pool ready", "names", up.ListNames())
 
 	// access log channel：proxy 写，主 goroutine 消费 + 落 DB。
 	accessLogCh := make(chan proxy.AccessLog, 1000)
@@ -185,6 +182,8 @@ func run() error {
 		GetSettings:         makeGetSettingsAdapter(db),
 		UpdateSettings:      makeUpdateSettingsAdapter(db, fs),
 		DryRunCleanup:       makeDryRunCleanupAdapter(db),
+		ListRegistries:      makeListRegistriesAdapter(db),
+		SetRegistryEnabled: makeSetRegistryEnabledAdapter(db),
 		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
 	})
 	srv := &http.Server{
@@ -465,6 +464,45 @@ func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore) func(ctx con
 		}
 		return makeGetSettingsAdapter(db)(ctx)
 	}
+}
+
+// buildUpstreamPoolEntries 从 DB 读 enabled upstreams + 构造 UpstreamPoolEntry 列表。
+//
+// dockerhub 的 upstream_url fallback 到 cfg.UpstreamRegistry（env 配的）。
+func buildUpstreamPoolEntries(db *storage.DB, cfg *config.Config, version string) []proxy.UpstreamPoolEntry {
+	ctx := context.Background()
+	ups, err := db.ListEnabledUpstreams(ctx)
+	if err != nil || len(ups) == 0 {
+		// fallback：用 cfg + dockerhub 默认 seed
+		logpkg.Warn("no enabled upstreams in DB, fallback to cfg.UpstreamRegistry as dockerhub",
+			"err", err)
+		return []proxy.UpstreamPoolEntry{{
+			Name:    "dockerhub",
+			BaseURL: cfg.UpstreamRegistry,
+			Timeout: cfg.UpstreamTimeout,
+			UA:      fmt.Sprintf("cncachehub/%s", version),
+		}}
+	}
+	ua := fmt.Sprintf("cncachehub/%s", version)
+	out := make([]proxy.UpstreamPoolEntry, 0, len(ups))
+	for _, u := range ups {
+		// dockerhub 没在 DB 配 upstream_url 时，env 兜底
+		base := u.UpstreamURL
+		if base == "" && u.Name == "dockerhub" {
+			base = cfg.UpstreamRegistry
+		}
+		if base == "" {
+			logpkg.Warn("upstream has no url, skip", "name", u.Name)
+			continue
+		}
+		out = append(out, proxy.UpstreamPoolEntry{
+			Name:    u.Name,
+			BaseURL: base,
+			Timeout: cfg.UpstreamTimeout,
+			UA:      ua,
+		})
+	}
+	return out
 }
 
 // makeDryRunCleanupAdapter 包装 dryRunCleanup → api。
@@ -887,6 +925,35 @@ func makeUpstreamsAdapter(db *storage.DB) func(ctx context.Context) ([]api.Upstr
 			})
 		}
 		return out, nil
+	}
+}
+
+// makeListRegistriesAdapter 列出所有 registry（含 disabled）+ CreatedAt。
+func makeListRegistriesAdapter(db *storage.DB) func(ctx context.Context) ([]api.Registry, error) {
+	return func(ctx context.Context) ([]api.Registry, error) {
+		rows, err := db.ListAllUpstreams(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]api.Registry, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, api.Registry{
+				ID:          r.ID,
+				Name:        r.Name,
+				UpstreamURL: r.UpstreamURL,
+				MirrorPath:  r.MirrorPath,
+				Enabled:     r.Enabled,
+				CreatedAt:   r.CreatedAt,
+			})
+		}
+		return out, nil
+	}
+}
+
+// makeSetRegistryEnabledAdapter 启停 upstream。
+func makeSetRegistryEnabledAdapter(db *storage.DB) func(ctx context.Context, name string, enabled bool) error {
+	return func(ctx context.Context, name string, enabled bool) error {
+		return db.SetUpstreamEnabled(ctx, name, enabled)
 	}
 }
 

@@ -29,13 +29,14 @@ func newTestProxy(t *testing.T, upHandler http.HandlerFunc) (*Proxy, *httptest.S
 	up := httptest.NewServer(upHandler)
 	t.Cleanup(up.Close)
 
-	u, err := NewUpstream(UpstreamOptions{
+	u, err := NewUpstreamPool([]UpstreamPoolEntry{{
+		Name:    "dockerhub",
 		BaseURL: up.URL,
 		Timeout: 10 * time.Second,
 		UA:      "cncachehub-test",
-	})
+	}})
 	if err != nil {
-		t.Fatalf("NewUpstream: %v", err)
+		t.Fatalf("NewUpstreamPool: %v", err)
 	}
 	c := newTestCache(t)
 	accessLog := make(chan AccessLog, 100)

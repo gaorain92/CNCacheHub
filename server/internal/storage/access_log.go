@@ -178,28 +178,6 @@ type RegistryUpstream struct {
 	CreatedAt   int64  `json:"createdAt"`
 }
 
-// ListEnabledUpstreams 列出 enabled=1 的 upstream。
-func (d *DB) ListEnabledUpstreams(ctx context.Context) ([]RegistryUpstream, error) {
-	rows, err := d.SQLDB.QueryContext(ctx,
-		`SELECT id, name, upstream_url, mirror_path, enabled, created_at
-		 FROM registry_upstreams WHERE enabled = 1 ORDER BY name ASC`)
-	if err != nil {
-		return nil, fmt.Errorf("storage: query upstreams: %w", err)
-	}
-	defer rows.Close()
-	var out []RegistryUpstream
-	for rows.Next() {
-		var u RegistryUpstream
-		var enabledI int
-		if err := rows.Scan(&u.ID, &u.Name, &u.UpstreamURL, &u.MirrorPath, &enabledI, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		u.Enabled = enabledI == 1
-		out = append(out, u)
-	}
-	return out, rows.Err()
-}
-
 // ErrNotFound 表示 DB 中找不到目标。
 var ErrNotFound = errors.New("storage: not found")
 
