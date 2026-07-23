@@ -265,3 +265,56 @@ export interface PreheatResponse {
   durationMs: number
   commandLine?: string
 }
+
+// === 通用预热任务（PRD §9.2.3 / §9.5.5） ===
+
+export interface PreheatTask {
+  id: number
+  name: string
+  kind: 'docker' | 'steam' | 'resource'
+  targets: string[]
+  status: 'pending' | 'running' | 'done' | 'error' | 'canceled'
+  progressTotal: number
+  progressDone: number
+  progressBytes: number
+  errorMessage: string
+  cronExpression: string
+  enabled: boolean
+  nextRunAt: number
+  lastRunAt: number
+  lastDurationMs: number
+  retryCount: number
+  maxRetries: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PreheatItem {
+  id: number
+  taskId: number
+  target: string
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped'
+  errorMessage: string
+  bytesAdded: number
+  startedAt: number
+  finishedAt: number
+}
+
+export interface PreheatTaskResponse {
+  items: PreheatTask[]
+  total: number
+}
+
+export interface PreheatItemResponse {
+  items: PreheatItem[]
+  total: number
+}
+
+export interface PreheatTaskCreate {
+  name: string
+  kind: 'docker' | 'steam' | 'resource'
+  targets: string[]
+  cronExpression?: string
+  maxRetries?: number
+  enabled?: boolean
+}

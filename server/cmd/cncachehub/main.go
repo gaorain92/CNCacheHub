@@ -36,6 +36,7 @@ import (
 	"github.com/cncachehub/server/internal/config"
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	logpkg "github.com/cncachehub/server/internal/log"
+	"github.com/cncachehub/server/internal/preheat"
 	"github.com/cncachehub/server/internal/proxy"
 	"github.com/cncachehub/server/internal/storage"
 )
@@ -158,6 +159,9 @@ func run() error {
 		AnswerIP:    "127.0.0.1",
 		DomainRules: []string{"*.steamcontent.com", "*.steamstatic.com", "client-download.steampowered.com"},
 	}, logpkg.L())
+
+	// 5f. 预热任务执行器（PRD §9.2.3 / §9.5.5）。CNCHBaseURL 走 cfg.HTTPAddr 内部地址。
+	preheatRunner := preheat.NewRunner(db, "http://"+cfg.HTTPAddr, logpkg.L())
 	if dnsCfg, err := db.GetDNSConfig(rootCtx); err == nil {
 		// 启动时 Reload（按 DB 配置决定 enabled / 端口 / 上游 / 答案 IP / 规则）
 		if rerr := dnsSrv.Reload(rootCtx, dnsserver.Config{
@@ -220,6 +224,14 @@ func run() error {
 		UpdateSteamAppID:    db.UpdateSteamAppID,
 		DeleteSteamAppID:    db.DeleteSteamAppID,
 		RecordPreheatResult: db.RecordPreheatResult,
+		// 通用预热任务（PRD §9.2.3 / §9.5.5）
+		ListPreheatTasks:  db.ListPreheatTasks,
+		GetPreheatTask:    db.GetPreheatTask,
+		CreatePreheatTask: db.CreatePreheatTask,
+		DeletePreheatTask: db.DeletePreheatTask,
+		ListPreheatItems:  db.ListPreheatItems,
+		RunPreheatTask:    preheatRunner.RunTask,
+		CancelPreheatTask: preheatRunner.CancelTask,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{

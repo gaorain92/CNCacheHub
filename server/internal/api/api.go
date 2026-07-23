@@ -117,6 +117,14 @@ type Options struct {
 	UpdateSteamAppID    func(ctx context.Context, id int64, patch storage.SteamAppIDPatch) (storage.SteamAppID, error)
 	DeleteSteamAppID    func(ctx context.Context, id int64) error
 	RecordPreheatResult func(ctx context.Context, id int64, status, message string, durationMs int64) error
+	// 通用预热任务（PRD §9.2.3 / §9.5.5）
+	ListPreheatTasks   func(ctx context.Context) ([]storage.PreheatTask, error)
+	GetPreheatTask     func(ctx context.Context, id int64) (storage.PreheatTask, error)
+	CreatePreheatTask  func(ctx context.Context, in storage.PreheatTask) (storage.PreheatTask, error)
+	DeletePreheatTask  func(ctx context.Context, id int64) error
+	ListPreheatItems   func(ctx context.Context, taskID int64) ([]storage.PreheatItem, error)
+	RunPreheatTask     func(ctx context.Context, id int64) error
+	CancelPreheatTask  func(id int64) bool
 }
 
 
@@ -294,6 +302,13 @@ func NewRouter(opts Options) http.Handler {
 		r.Patch("/steamcmd/appids/{id}", steamAppIDPatchHandler(opts))
 		r.Delete("/steamcmd/appids/{id}", steamAppIDDeleteHandler(opts))
 		r.Post("/steamcmd/appids/{id}/preheat", steamAppIDPreheatHandler(opts))
+		// 通用预热任务（PRD §9.2.3 / §9.5.5）
+		r.Get("/preheat/tasks", preheatTaskListHandler(opts))
+		r.Post("/preheat/tasks", preheatTaskCreateHandler(opts))
+		r.Delete("/preheat/tasks/{id}", preheatTaskDeleteHandler(opts))
+		r.Post("/preheat/tasks/{id}/run", preheatTaskRunHandler(opts))
+		r.Post("/preheat/tasks/{id}/cancel", preheatTaskCancelHandler(opts))
+		r.Get("/preheat/tasks/{id}/items", preheatTaskItemsHandler(opts))
 	})
 
 	// /v2/* — 镜像反代
