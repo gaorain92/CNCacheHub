@@ -73,6 +73,8 @@ type Options struct {
 	Build     BuildInfo
 	// ProxyHandler 处理 /v2/* 请求（registry 反代）；nil 时 /v2/* 返回 503。
 	ProxyHandler http.Handler
+	// ResourceHandler 处理 /r/* 资源加速反代（PRD §9.4）；nil 时 /r/* 返回 503。
+	ResourceHandler http.Handler
 	// AccessLogWriter 写访问日志；nil 时不记。
 	AccessLogWriter AccessLogWriter
 	// GetUpstreams 列出 enabled upstreams（api/dashboard 用）。
@@ -128,6 +130,13 @@ type Options struct {
 	CancelPreheatTask  func(id int64) bool
 	// 诊断中心（PRD §9.7）
 	RunDiagnostics func(ctx context.Context) diagnostics.FullReport
+	// 资源加速中心（PRD §9.4）
+	ListResourceRules        func(ctx context.Context) ([]storage.ResourceRule, error)
+	CreateResourceRule       func(ctx context.Context, in storage.ResourceRule) (storage.ResourceRule, error)
+	UpdateResourceRule       func(ctx context.Context, id int64, patch storage.ResourceRulePatch) (storage.ResourceRule, error)
+	DeleteResourceRule       func(ctx context.Context, id int64) error
+	ListResourceCache        func(ctx context.Context, ruleID int64, limit int) ([]storage.ResourceCacheEntry, error)
+	DeleteResourceCacheEntry func(ctx context.Context, id int64) error
 }
 
 
@@ -314,12 +323,25 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/preheat/tasks/{id}/items", preheatTaskItemsHandler(opts))
 		// 诊断中心（PRD §9.7）
 		r.Get("/diagnostics/run", diagnosticsRunHandler(opts))
+		// 资源加速中心（PRD §9.4）
+		r.Get("/resources/rules", resourceRuleListHandler(opts))
+		r.Post("/resources/rules", resourceRuleCreateHandler(opts))
+		r.Patch("/resources/rules/{id}", resourceRulePatchHandler(opts))
+		r.Delete("/resources/rules/{id}", resourceRuleDeleteHandler(opts))
+		r.Get("/resources/rules/{id}/cache", resourceCacheListHandler(opts))
+		r.Delete("/resources/cache/{id}", resourceCacheDeleteHandler(opts))
 	})
 
 	// /v2/* — 镜像反代
 	if opts.ProxyHandler != nil {
 		r.Handle("/v2", opts.ProxyHandler)
 		r.Handle("/v2/*", opts.ProxyHandler)
+	}
+
+	// /r/* — 资源加速反代（PRD §9.4）
+	if opts.ResourceHandler != nil {
+		r.Handle("/r", opts.ResourceHandler)
+		r.Handle("/r/*", opts.ResourceHandler)
 	} else {
 		// 注入缺失：返回 503
 		r.Get("/v2", func(w http.ResponseWriter, r *http.Request) {

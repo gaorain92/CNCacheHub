@@ -6,6 +6,7 @@ import {
   Box,
   Goods,
   DocumentCopy,
+  FolderOpened,
   HotWater,
   FirstAidKit,
   DataLine,
@@ -36,6 +37,7 @@ const items: NavItem[] = [
   { name: 'preheat', path: '/preheat', label: '预热任务', icon: HotWater },
   { name: 'diagnostics', path: '/diagnostics', label: '诊断中心', icon: FirstAidKit },
   { name: 'cache', path: '/cache', label: '缓存管理', icon: DataLine },
+  { name: 'resources', path: '/resources', label: '资源加速', icon: FolderOpened },
   { name: 'logs', path: '/logs', label: '请求日志', icon: List },
   { name: 'settings', path: '/settings', label: '系统设置', icon: SetUp },
 ]

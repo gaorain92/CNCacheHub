@@ -343,3 +343,57 @@ export interface DiagFullReport {
   generatedAt: number
   cnchVersion: string
 }
+
+// === 资源加速中心（PRD §9.4） ===
+
+export interface ResourceRule {
+  id: number
+  name: string
+  kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
+  upstreamUrl: string
+  defaultTtlSeconds: number
+  enabled: boolean
+  description: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ResourceRuleResponse {
+  items: ResourceRule[]
+  total: number
+}
+
+export interface ResourceCacheEntry {
+  id: number
+  ruleId: number
+  path: string
+  sizeBytes: number
+  hitCount: number
+  lastAccessAt: number
+  expiresAt: number
+  contentType: string
+  storagePath: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ResourceCacheResponse {
+  items: ResourceCacheEntry[]
+  total: number
+}
+
+export interface ResourceRuleCreate {
+  name: string
+  kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
+  upstreamUrl: string
+  defaultTtlSeconds?: number
+  description?: string
+  enabled?: boolean
+}
+
+export interface ResourceRulePatch {
+  upstreamUrl?: string
+  defaultTtlSeconds?: number
+  enabled?: boolean
+  description?: string
+}

@@ -67,6 +67,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '系统设置' },
   },
   {
+    path: '/resources',
+    name: 'resources',
+    component: () => import('@/views/ResourcesView.vue'),
+    meta: { title: '资源加速中心' },
+  },
+  {
     path: '/logs',
     name: 'logs',
     component: () => import('@/views/LogsView.vue'),

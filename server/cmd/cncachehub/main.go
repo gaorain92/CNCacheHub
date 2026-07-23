@@ -201,6 +201,7 @@ func run() error {
 		StartTime:           cfg.StartTime,
 		Build:               build,
 		ProxyHandler:        proxyHandler,
+		ResourceHandler:     proxy.NewResourceHandler(db, fs, int64(maxMB)*1024*1024, logpkg.L()),
 		AccessLogWriter:     &accessLogBridge{db: db},
 		GetUpstreams:        makeUpstreamsAdapter(db),
 		GetDashboardSummary: makeDashboardAdapter(db),
@@ -238,6 +239,13 @@ func run() error {
 		CancelPreheatTask: preheatRunner.CancelTask,
 		// 诊断中心（PRD §9.7）
 		RunDiagnostics: makeRunDiagnostics(db, dnsSrv, &cfg),
+		// 资源加速中心（PRD §9.4）
+		ListResourceRules:        db.ListResourceRules,
+		CreateResourceRule:       db.CreateResourceRule,
+		UpdateResourceRule:       db.UpdateResourceRule,
+		DeleteResourceRule:       db.DeleteResourceRule,
+		ListResourceCache:        db.ListResourceCache,
+		DeleteResourceCacheEntry: db.DeleteResourceCacheEntry,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
