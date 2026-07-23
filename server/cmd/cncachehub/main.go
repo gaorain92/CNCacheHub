@@ -213,6 +213,13 @@ func run() error {
 		UpdateDNSConfig:    makeUpdateDNSConfigAdapter(db),
 		DNSServer:          dnsSrv,
 		SessionUserRole:    makeSessionUserRoleAdapter(db),
+		// SteamCMD AppID 管理（PRD §9.3.3）
+		ListSteamAppIDs:     db.ListSteamAppIDs,
+		GetSteamAppID:       db.GetSteamAppID,
+		CreateSteamAppID:    db.CreateSteamAppID,
+		UpdateSteamAppID:    db.UpdateSteamAppID,
+		DeleteSteamAppID:    db.DeleteSteamAppID,
+		RecordPreheatResult: db.RecordPreheatResult,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{

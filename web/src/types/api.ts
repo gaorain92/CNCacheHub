@@ -216,3 +216,52 @@ export interface DNSTestResponse {
   latencyMs: number
   error?: string
 }
+
+// === SteamCMD AppID 管理（PRD §9.3.3） ===
+
+export interface SteamAppID {
+  id: number
+  appId: number
+  name: string
+  loginType: 'anonymous' | 'account'
+  installDir: string
+  enabled: boolean
+  lastPreheatAt: number
+  lastPreheatStatus: 'ok' | 'error' | 'running' | 'skipped' | ''
+  lastPreheatMessage: string
+  lastPreheatDurationMs: number
+  cacheBytesEstimate: number
+  hitCount: number
+  missCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SteamAppIDCreate {
+  appId: number
+  name: string
+  loginType?: 'anonymous' | 'account'
+  installDir?: string
+  enabled?: boolean
+}
+
+export interface SteamAppIDPatch {
+  name?: string
+  loginType?: 'anonymous' | 'account'
+  installDir?: string
+  enabled?: boolean
+  cacheBytesEstimate?: number
+}
+
+export interface SteamAppIDResponse {
+  items: SteamAppID[]
+  total: number
+}
+
+export interface PreheatResponse {
+  appId: number
+  status: 'ok' | 'error' | 'running' | 'skipped'
+  message: string
+  durationMs: number
+  commandLine?: string
+}

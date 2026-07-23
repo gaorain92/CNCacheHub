@@ -110,6 +110,13 @@ type Options struct {
 	UpdateDNSConfig func(ctx context.Context, patch storage.DNSConfigPatch) (storage.DNSConfig, error)
 	// DNSServer 内置 mini DNS server 实例（PRD §9.3）。
 	DNSServer *dnsserver.Server
+	// SteamCMD AppID CRUD（PRD §9.3.3）
+	ListSteamAppIDs     func(ctx context.Context) ([]storage.SteamAppID, error)
+	GetSteamAppID       func(ctx context.Context, id int64) (storage.SteamAppID, error)
+	CreateSteamAppID    func(ctx context.Context, in storage.SteamAppID) (storage.SteamAppID, error)
+	UpdateSteamAppID    func(ctx context.Context, id int64, patch storage.SteamAppIDPatch) (storage.SteamAppID, error)
+	DeleteSteamAppID    func(ctx context.Context, id int64) error
+	RecordPreheatResult func(ctx context.Context, id int64, status, message string, durationMs int64) error
 }
 
 
@@ -281,6 +288,12 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/dns/stats", dnsStatsHandler(opts))
 		r.Get("/dns/test", dnsTestHandler(opts))
 		r.Post("/dns/test", dnsTestHandler(opts))
+		// SteamCMD AppID 管理（PRD §9.3.3）
+		r.Get("/steamcmd/appids", steamAppIDListHandler(opts))
+		r.Post("/steamcmd/appids", steamAppIDCreateHandler(opts))
+		r.Patch("/steamcmd/appids/{id}", steamAppIDPatchHandler(opts))
+		r.Delete("/steamcmd/appids/{id}", steamAppIDDeleteHandler(opts))
+		r.Post("/steamcmd/appids/{id}/preheat", steamAppIDPreheatHandler(opts))
 	})
 
 	// /v2/* — 镜像反代
