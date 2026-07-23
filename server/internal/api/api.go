@@ -25,6 +25,7 @@ import (
 	"time"
 
 	dnsserver "github.com/cncachehub/server/internal/dns"
+	"github.com/cncachehub/server/internal/diagnostics"
 	"github.com/cncachehub/server/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -125,6 +126,8 @@ type Options struct {
 	ListPreheatItems   func(ctx context.Context, taskID int64) ([]storage.PreheatItem, error)
 	RunPreheatTask     func(ctx context.Context, id int64) error
 	CancelPreheatTask  func(id int64) bool
+	// 诊断中心（PRD §9.7）
+	RunDiagnostics func(ctx context.Context) diagnostics.FullReport
 }
 
 
@@ -309,6 +312,8 @@ func NewRouter(opts Options) http.Handler {
 		r.Post("/preheat/tasks/{id}/run", preheatTaskRunHandler(opts))
 		r.Post("/preheat/tasks/{id}/cancel", preheatTaskCancelHandler(opts))
 		r.Get("/preheat/tasks/{id}/items", preheatTaskItemsHandler(opts))
+		// 诊断中心（PRD §9.7）
+		r.Get("/diagnostics/run", diagnosticsRunHandler(opts))
 	})
 
 	// /v2/* — 镜像反代

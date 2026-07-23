@@ -168,6 +168,18 @@ func (d *DB) DashboardSummary(ctx context.Context) (DashboardSummary, error) {
 	return s, nil
 }
 
+// Count24hStatus 统计 24h 内 status >= X 的请求数（给诊断中心用）。
+func (d *DB) Count24hStatus(ctx context.Context, minStatus int) (int, error) {
+	cutoff := time.Now().Add(-24 * time.Hour).Unix()
+	var n int
+	if err := d.SQLDB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM request_logs WHERE created_at >= ? AND status >= ?`,
+		cutoff, minStatus).Scan(&n); err != nil {
+		return 0, fmt.Errorf("storage: count 24h status: %w", err)
+	}
+	return n, nil
+}
+
 // RegistryUpstream 是 registry_upstreams 行的 Go 表示。
 type RegistryUpstream struct {
 	ID          int64  `json:"id"`

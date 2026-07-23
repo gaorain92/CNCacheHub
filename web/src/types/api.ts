@@ -318,3 +318,28 @@ export interface PreheatTaskCreate {
   maxRetries?: number
   enabled?: boolean
 }
+
+// === 诊断中心（PRD §9.7） ===
+
+export type DiagStatus = 'ok' | 'warning' | 'error'
+
+export interface DiagCheckResult {
+  name: string
+  status: DiagStatus
+  message: string
+  fix?: string
+  detail?: string
+}
+
+export interface DiagReport {
+  playbook: 'docker_pull' | 'steamcmd_dns' | 'reverse_proxy'
+  title: string
+  summary: DiagStatus
+  checks: DiagCheckResult[]
+}
+
+export interface DiagFullReport {
+  playbooks: DiagReport[]
+  generatedAt: number
+  cnchVersion: string
+}

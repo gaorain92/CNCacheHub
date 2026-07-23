@@ -20,13 +20,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -35,6 +38,7 @@ import (
 	"github.com/cncachehub/server/internal/cache"
 	"github.com/cncachehub/server/internal/config"
 	dnsserver "github.com/cncachehub/server/internal/dns"
+	"github.com/cncachehub/server/internal/diagnostics"
 	logpkg "github.com/cncachehub/server/internal/log"
 	"github.com/cncachehub/server/internal/preheat"
 	"github.com/cncachehub/server/internal/proxy"
@@ -232,6 +236,8 @@ func run() error {
 		ListPreheatItems:  db.ListPreheatItems,
 		RunPreheatTask:    preheatRunner.RunTask,
 		CancelPreheatTask: preheatRunner.CancelTask,
+		// 诊断中心（PRD §9.7）
+		RunDiagnostics: makeRunDiagnostics(db, dnsSrv, &cfg),
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
@@ -1138,4 +1144,106 @@ func makeSessionUserRoleAdapter(db *storage.DB) func(ctx context.Context, r *htt
 		}
 		return role, u.ID, nil
 	}
+}
+
+// makeRunDiagnostics 构造诊断中心的 closure。
+// 包含 DNS server stats + access log 聚合 + docker daemon.json 读取。
+func makeRunDiagnostics(db *storage.DB, dnsSrv *dnsserver.Server, cfg *config.Config) func(ctx context.Context) diagnostics.FullReport {
+	return func(ctx context.Context) diagnostics.FullReport {
+		// 解析 public base URL — 从 cfg.HTTPAddr（127.0.0.1:8082）换成本机非 loopback IP
+		// 简单做法：取本机 hostname 解析的第一个非 loopback IPv4。
+		publicBase := "http://" + firstNonLoopbackIPv4()
+		if cfg.HTTPAddr != "" && !strings.HasPrefix(cfg.HTTPAddr, "127.") && !strings.HasPrefix(cfg.HTTPAddr, "0.0.0.0") {
+			publicBase = "http://" + cfg.HTTPAddr
+		}
+		return diagnostics.RunAll(ctx, diagnostics.RunnerOptions{
+			CNCHBaseURL:   "http://" + cfg.HTTPAddr,
+			PublicBaseURL: publicBase,
+			UpstreamURL:   cfg.UpstreamRegistry,
+			DNSServerStats: func() diagnostics.DNSStats {
+				cfg2 := dnsSrv.Config()
+				stats2 := dnsSrv.Stats()
+				return diagnostics.DNSStats{
+					Enabled:        cfg2.Enabled,
+					ListenAddr:     cfg2.ListenAddr,
+					DomainRules:    cfg2.DomainRules,
+					LastQueryAt:    stats2.LastQueryAt,
+					TotalQueries:   stats2.TotalQueries,
+					HitQueries:     stats2.HitQueries,
+					MissQueries:    stats2.MissQueries,
+					BlockedQueries: stats2.BlockedQueries,
+				}
+			},
+			AccessLogCount: func() (int, int, int, error) {
+				d, err := db.DashboardSummary(ctx)
+				if err != nil {
+					return 0, 0, 0, err
+				}
+				s5xx, err := db.Count24hStatus(ctx, 500)
+				if err != nil {
+					return d.RequestCount24h, d.ErrorCount24h, 0, err
+				}
+				return d.RequestCount24h, d.ErrorCount24h, s5xx, nil
+			},
+			DaemonConfig: func() (mirrors []string, insecure bool) {
+				return readDockerDaemonConfig()
+			},
+		})
+	}
+}
+
+// firstNonLoopbackIPv4 拿本机第一个非 127 / IPv6 的 IPv4。
+// 简单 net.InterfaceByName + Addrs()。
+func firstNonLoopbackIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			return ip4.String()
+		}
+	}
+	return "127.0.0.1"
+}
+
+// readDockerDaemonConfig 读 /etc/docker/daemon.json 拿 registry-mirrors。
+// 错误时返回空 slice（call site 当 warning 处理）。
+func readDockerDaemonConfig() ([]string, bool) {
+	data, err := os.ReadFile("/etc/docker/daemon.json")
+	if err != nil {
+		return nil, false
+	}
+	var dc struct {
+		RegistryMirrors   []string `json:"registry-mirrors"`
+		InsecureRegistries []string `json:"insecure-registries"`
+	}
+	if err := json.Unmarshal(data, &dc); err != nil {
+		return nil, false
+	}
+	insecure := false
+	for _, r := range dc.InsecureRegistries {
+		if strings.Contains(r, "117.55.237.250") || strings.Contains(r, "127.0.0.1") || strings.Contains(r, "localhost") {
+			insecure = true
+		}
+	}
+	return dc.RegistryMirrors, insecure
 }
