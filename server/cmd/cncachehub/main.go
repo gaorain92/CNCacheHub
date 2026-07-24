@@ -254,6 +254,21 @@ func run() error {
 		MetricsVersion:    version,
 		MetricsCommit:     commit,
 		MetricsStartTime:  cfg.StartTime,
+		// 诊断包导出（P2#3）— BundleSource 注入
+		BundleSource: diagnostics.BundleSource{
+			DB:           db,
+			Version:      version,
+			Commit:       commit,
+			StartTime:    cfg.StartTime,
+			HTTPAddr:     cfg.HTTPAddr,
+			CacheDir:     cfg.CacheDir,
+			DataDir:      cfg.DataDir,
+			UpstreamURL:  cfg.UpstreamRegistry,
+			MaxObjectMB:  maxMB,
+			ReserveGB:    reserveGB,
+			CacheTotalGB: cfg.CacheTotalGB,
+			// LogPath 留空（server 走 slog stderr，没落文件；未来加文件日志时填上）
+		},
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{

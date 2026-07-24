@@ -151,6 +151,8 @@ type Options struct {
 	MetricsVersion   string
 	MetricsCommit    string
 	MetricsStartTime time.Time
+	// 诊断包导出（P2#3）— 注入 BundleSource，handler 直接调 diagnostics.WriteBundle。
+	BundleSource diagnostics.BundleSource
 }
 
 
@@ -337,6 +339,7 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/preheat/tasks/{id}/items", preheatTaskItemsHandler(opts))
 		// 诊断中心（PRD §9.7）
 		r.Get("/diagnostics/run", diagnosticsRunHandler(opts))
+		r.Post("/diagnostics/bundle", diagnosticsBundleHandler(opts)) // P2#3
 		// 资源加速中心（PRD §9.4）
 		r.Get("/resources/rules", resourceRuleListHandler(opts))
 		r.Post("/resources/rules", resourceRuleCreateHandler(opts))
