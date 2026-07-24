@@ -2046,11 +2046,13 @@ cncachehub-client-config.zip
 
 ### 19.3 P2 验收
 
-- 支持通用白名单 URL 缓存。
-- 支持 Prometheus metrics。
-- 支持多节点缓存。
-- 支持导出完整诊断包。
-- 支持访问 Token 和 IP 白名单策略。
+| 验收项 | 状态 | 实现位置 |
+|---|---|---|
+| 支持通用白名单 URL 缓存 | ✅ | `resource_rules.path_pattern`（glob 匹配）+ `internal/proxy/resource.go` + 7 个内置模板（`GET /api/resources/templates`） |
+| 支持 Prometheus metrics | ✅ | `internal/metrics/metrics.go`（手写 text-format，18 指标）+ `GET /metrics` |
+| 支持多节点缓存 | ⏸ deferred | 详见 `docs/architecture.md` §4.1：DB schema 预留（`nodes` + `node_health`）+ 路由策略（一致性 hash），但 v1.0 是单 VPS 定位，**实际不实现** |
+| 支持导出完整诊断包 | ✅ | `POST /api/diagnostics/bundle` — 流式 tar.gz 含 16 个文件（README / system / config / summary / settings / rules / rule_cache / preheat_tasks / preheat_items / cleanup_tasks / access_logs / dns_config / cache_policy / settings_extra / system.log） |
+| 支持访问 Token 和 IP 白名单策略 | ✅ | `internal/access/middleware.go` + `GET / PUT /api/access-control` + 4 个 system_settings key + 挂到 `/v2/*` 和 `/r/*` |
 
 ---
 
