@@ -1,10 +1,14 @@
 package api
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -156,5 +160,212 @@ func TestClientConfig_UnknownRegistry_404(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
+	}
+}
+
+// === §9.5.4 bundle tests ===
+
+// extractBundle 解 zip 返回 map[path]→content。
+func extractBundle(t *testing.T, data []byte) map[string][]byte {
+	t.Helper()
+	r, err := zip.NewReader(strings.NewReader(string(data)), int64(len(data)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	out := make(map[string][]byte, len(r.File))
+	for _, f := range r.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		body, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		out[f.Name] = body
+	}
+	return out
+}
+
+func TestClientConfigBundle_HasAll10Files(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Errorf("Content-Type = %q, want application/zip", ct)
+	}
+	if cd := rr.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, `attachment; filename="cncachehub-client-config-`) {
+		t.Errorf("Content-Disposition = %q, want attachment with cncachehub-client-config- prefix", cd)
+	}
+
+	files := extractBundle(t, rr.Body.Bytes())
+	want := []string{
+		"docker/daemon.json",
+		"containerd/docker.io/hosts.toml",
+		"containerd/ghcr.io/hosts.toml",
+		"containerd/quay.io/hosts.toml",
+		"containerd/registry.k8s.io/hosts.toml",
+		"k3s/registries.yaml",
+		"steamcmd/docker-compose.yml",
+		"resource-accelerators/playwright.env",
+		"resource-accelerators/puppeteer.env",
+		"resource-accelerators/terraformrc",
+		"resource-accelerators/helm-repos.sh",
+		"verify.sh",
+		"README.md",
+	}
+	for _, p := range want {
+		if _, ok := files[p]; !ok {
+			t.Errorf("missing file in bundle: %s", p)
+		}
+	}
+	// disabled-test 不应出现在 containerd/ 下
+	if _, ok := files["containerd/example.com/hosts.toml"]; ok {
+		t.Errorf("disabled registry should not appear in bundle")
+	}
+}
+
+func TestClientConfigBundle_DaemonJSON_Valid(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+
+	files := extractBundle(t, rr.Body.Bytes())
+	dj, ok := files["docker/daemon.json"]
+	if !ok {
+		t.Fatal("docker/daemon.json missing")
+	}
+	// 应该含 registry-mirrors
+	if !strings.Contains(string(dj), `"registry-mirrors"`) {
+		t.Errorf("daemon.json missing registry-mirrors: %s", dj)
+	}
+	if !strings.Contains(string(dj), `http://117.55.237.250:8082`) {
+		t.Errorf("daemon.json missing base URL: %s", dj)
+	}
+	// 应该是合法 JSON（去掉注释前缀行）
+	lines := strings.Split(string(dj), "\n")
+	// 提取花括号部分
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "{") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("daemon.json: no JSON start")
+	}
+	body := strings.Join(lines[start:], "\n")
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("daemon.json not valid JSON: %v\n%s", err, body)
+	}
+	mirrors, ok := parsed["registry-mirrors"].([]any)
+	if !ok || len(mirrors) == 0 {
+		t.Errorf("daemon.json registry-mirrors empty")
+	}
+}
+
+func TestClientConfigBundle_K3sYAML_ContainsAllEnabled(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	files := extractBundle(t, rr.Body.Bytes())
+	ky := string(files["k3s/registries.yaml"])
+	// 应该含 4 个 enabled registry（key 用 %q 引用）
+	for _, h := range []string{`"docker.io":`, `"ghcr.io":`, `"quay.io":`, `"registry.k8s.io":`} {
+		if !strings.Contains(ky, h) {
+			t.Errorf("k3s yaml missing %s", h)
+		}
+	}
+}
+
+func TestClientConfigBundle_PlaywrightEnv_ContainsHost(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	files := extractBundle(t, rr.Body.Bytes())
+	pe := string(files["resource-accelerators/playwright.env"])
+	if !strings.Contains(pe, "PLAYWRIGHT_DOWNLOAD_HOST=") {
+		t.Errorf("playwright.env missing PLAYWRIGHT_DOWNLOAD_HOST")
+	}
+	if !strings.Contains(pe, "http://117.55.237.250:8082/r/playwright") {
+		t.Errorf("playwright.env missing base URL")
+	}
+}
+
+func TestClientConfigBundle_VerifySh_BashSyntax(t *testing.T) {
+	// 跳过 bash 语法检查（不是所有环境都有 bash）
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	files := extractBundle(t, rr.Body.Bytes())
+	vs := files["verify.sh"]
+	tmp := t.TempDir() + "/verify.sh"
+	if err := os.WriteFile(tmp, vs, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-n", tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("bash -n failed: %v\noutput: %s\nscript:\n%s", err, out, vs)
+	}
+}
+
+func TestClientConfigBundle_Readme_ContainsBaseURL(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	files := extractBundle(t, rr.Body.Bytes())
+	rm := string(files["README.md"])
+	if !strings.Contains(rm, "http://117.55.237.250:8082") {
+		t.Errorf("README missing base URL")
+	}
+	if !strings.Contains(rm, "## 快速验证") {
+		t.Errorf("README missing 快速验证 section")
+	}
+	if !strings.Contains(rm, "verify.sh") {
+		t.Errorf("README missing verify.sh reference")
+	}
+}
+
+func TestClientConfigBundle_SteamCMDCompose_ContainsDNS(t *testing.T) {
+	h, _ := clientConfigTestHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
+	req.Host = "117.55.237.250:8082"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	files := extractBundle(t, rr.Body.Bytes())
+	dc := string(files["steamcmd/docker-compose.yml"])
+	if !strings.Contains(dc, "cm2network/steamcmd") {
+		t.Errorf("steamcmd compose missing image")
+	}
+	if !strings.Contains(dc, "dns:") {
+		t.Errorf("steamcmd compose missing dns: field")
+	}
+	if !strings.Contains(dc, "CNCH_BASE_URL") {
+		t.Errorf("steamcmd compose missing CNCH_BASE_URL env")
 	}
 }

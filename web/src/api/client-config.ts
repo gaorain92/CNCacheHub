@@ -32,3 +32,17 @@ export async function generateClientConfig(
   })
   return data
 }
+
+/**
+ * POST /api/client-config/bundle — §9.5.4 一键 zip 配置包
+ *
+ * 返回 Blob；调用方负责触发下载。
+ */
+export async function downloadClientConfigBundle(): Promise<Blob> {
+  const response = await api.post<Blob>('/client-config/bundle', null, {
+    responseType: 'blob',
+    // axios 默认会尝试把 blob 转 JSON；显式声明 raw
+    transformRequest: [(data) => data],
+  })
+  return response.data
+}

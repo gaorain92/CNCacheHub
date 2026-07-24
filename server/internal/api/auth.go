@@ -421,6 +421,7 @@ func needsAuth(path string) bool {
 		"/api/healthz",
 		"/api/version",
 		"/api/client-config",
+		"/api/client-config/bundle",
 	} {
 		if p == path {
 			return false

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Check, Connection, CopyDocument, Document, Position, Refresh } from '@element-plus/icons-vue'
+import { Check, Connection, CopyDocument, Document, Download, Position, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElTabPane, ElTabs } from 'element-plus'
 import DaemonJsonBlock from '@/components/DaemonJsonBlock.vue'
 import { useClientConfigStore } from '@/stores/client-config'
+import { downloadClientConfigBundle } from '@/api/client-config'
 
 const config = useClientConfigStore()
 
@@ -20,6 +21,7 @@ const selectedRegistry = ref('dockerhub')
 const selectedFormat = ref<'containerd-hosts' | 'k3s-registries'>('containerd-hosts')
 
 const copied = ref(false)
+const downloading = ref(false)
 
 async function regen(): Promise<void> {
   if (activeTab.value === 'docker') return
@@ -43,6 +45,27 @@ async function copyContent(): Promise<void> {
   }
 }
 
+// 下载完整配置包 zip（§9.5.4）
+async function downloadBundle(): Promise<void> {
+  downloading.value = true
+  try {
+    const blob = await downloadClientConfigBundle()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cncachehub-client-config-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.zip`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('配置包已下载，解压后 bash verify.sh 验证')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error?.message || e?.message || '下载失败')
+  } finally {
+    downloading.value = false
+  }
+}
+
 // 切 tab 或 registry 时重生成
 watch([activeTab, selectedRegistry], () => {
   if (activeTab.value !== 'docker') {
@@ -61,14 +84,24 @@ const onTabChange = (name: string | number): void => {
 
 <template>
   <section class="soft rounded-[2rem] p-8 space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><Document /></el-icon>
+    <header class="flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-3">
+        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
+          <el-icon :size="22" color="#020617"><Document /></el-icon>
+        </div>
+        <div>
+          <h2 class="text-2xl font-semibold">客户端配置</h2>
+          <p class="text-sm text-slate-400">生成 Docker / containerd / k3s 客户端配置，一键复制粘贴接入。</p>
+        </div>
       </div>
-      <div>
-        <h2 class="text-2xl font-semibold">客户端配置</h2>
-        <p class="text-sm text-slate-400">生成 Docker / containerd / k3s 客户端配置，一键复制粘贴接入。</p>
-      </div>
+      <el-button
+        :icon="Download"
+        type="primary"
+        :loading="downloading"
+        @click="downloadBundle"
+      >
+        下载完整配置包（zip）
+      </el-button>
     </header>
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">

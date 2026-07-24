@@ -324,6 +324,7 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/registries", registriesListHandler(opts))
 		r.Patch("/registries/{name}", registryPatchHandler(opts))
 		r.Post("/client-config", generateClientConfigHandler(opts))
+		r.Post("/client-config/bundle", generateClientConfigBundleHandler(opts)) // §9.5.4
 		// SteamCMD DNS 启动器（PRD §9.3）
 		r.Get("/dns/config", dnsConfigGetHandler(opts))
 		r.Patch("/dns/config", dnsConfigPatchHandler(opts))
