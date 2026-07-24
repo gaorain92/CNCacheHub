@@ -351,6 +351,7 @@ export interface ResourceRule {
   name: string
   kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
   upstreamUrl: string
+  pathPattern: string // P2#1 glob；默认 "*"
   defaultTtlSeconds: number
   enabled: boolean
   description: string
@@ -389,6 +390,7 @@ export interface ResourceRuleCreate {
   defaultTtlSeconds?: number
   description?: string
   enabled?: boolean
+  pathPattern?: string // P2#1 glob 匹配；默认 "*"
 }
 
 export interface ResourceRulePatch {
@@ -396,4 +398,19 @@ export interface ResourceRulePatch {
   defaultTtlSeconds?: number
   enabled?: boolean
   description?: string
+  pathPattern?: string // P2#1
+}
+
+export interface ResourceTemplate {
+  name: string
+  kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
+  upstreamUrl: string
+  pathPattern: string
+  description: string
+  sample: string
+}
+
+export interface ResourceTemplateResponse {
+  items: ResourceTemplate[]
+  total: number
 }

@@ -99,6 +99,11 @@ func (h *ResourceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rule disabled", http.StatusForbidden)
 		return
 	}
+	// P2#1: path_pattern 匹配（白名单更精细）
+	if !rule.MatchPath(restPath) {
+		http.Error(w, "path not in rule whitelist: "+restPath+" (pattern: "+rule.PathPattern+")", http.StatusForbidden)
+		return
+	}
 
 	// 查 cache entry
 	digest := pathDigest(restPath)

@@ -178,3 +178,65 @@ func validResourceKind(k string) bool {
 	}
 	return false
 }
+
+// ResourceTemplate 是 /api/resources/templates 返回的预置模板。
+type ResourceTemplate struct {
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	UpstreamURL string `json:"upstreamUrl"`
+	PathPattern string `json:"pathPattern"`
+	Description string `json:"description"`
+	Sample      string `json:"sample"` // 示例接入命令
+}
+
+// resourceTemplatesHandler GET /api/resources/templates — 返回内置推荐模板
+// 不需要 admin（普通用户能看到推荐列表）
+func resourceTemplatesHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		templates := []ResourceTemplate{
+			{
+				Name: "github-raw", Kind: "github", UpstreamURL: "https://raw.githubusercontent.com",
+				PathPattern: "**",
+				Description: "GitHub raw 文件（任意 repo/branch/path）",
+				Sample:      "curl http://CNCacheHub/r/github-raw/golang/go/master/CONTRIBUTING.md",
+			},
+			{
+				Name: "ghcr-blob", Kind: "github", UpstreamURL: "https://ghcr.io",
+				PathPattern: "v2/**",
+				Description: "GitHub Container Registry 的 OCI blob（手动 v2 API）",
+				Sample:      "curl http://CNCacheHub/r/ghcr-blob/v2/owner/image/manifests/latest",
+			},
+			{
+				Name: "huggingface", Kind: "huggingface", UpstreamURL: "https://huggingface.co",
+				PathPattern: "**",
+				Description: "Hugging Face 模型 / datasets / tokenizer",
+				Sample:      "curl http://CNCacheHub/r/huggingface/Qwen/Qwen2.5-7B-Instruct/resolve/main/config.json",
+			},
+			{
+				Name: "playwright-cdn", Kind: "playwright", UpstreamURL: "https://playwright.azureedge.net",
+				PathPattern: "**",
+				Description: "Playwright 浏览器二进制（设置 PLAYWRIGHT_DOWNLOAD_HOST）",
+				Sample:      "export PLAYWRIGHT_DOWNLOAD_HOST=http://CNCacheHub/r/playwright-cdn",
+			},
+			{
+				Name: "terraform-releases", Kind: "terraform", UpstreamURL: "https://releases.hashicorp.com",
+				PathPattern: "**",
+				Description: "Terraform / Vault 等 HashiCorp 工具 release",
+				Sample:      "curl http://CNCacheHub/r/terraform-releases/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip",
+			},
+			{
+				Name: "npm-public", Kind: "custom", UpstreamURL: "https://registry.npmjs.org",
+				PathPattern: "**",
+				Description: "NPM public registry（tarball 缓存，tarball URL 含 ?token 时不缓存）",
+				Sample:      "curl http://CNCacheHub/r/npm-public/-/lodash/-/lodash-4.17.21.tgz",
+			},
+			{
+				Name: "pypi-files", Kind: "custom", UpstreamURL: "https://files.pythonhosted.org",
+				PathPattern: "**",
+				Description: "PyPI 包文件（sdist + wheel）",
+				Sample:      "curl http://CNCacheHub/r/pypi-files/packages/.../requests-2.31.0.tar.gz",
+			},
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": templates, "total": len(templates)})
+	}
+}

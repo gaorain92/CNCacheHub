@@ -152,6 +152,33 @@ func TestResourceCache_UpsertAndHit(t *testing.T) {
 	}
 }
 
+func TestResourceRule_MatchPath(t *testing.T) {
+	cases := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"*", "anything", true},
+		{"*", "a/b/c", true},
+		{"", "anything", true},
+		{"owner/*", "owner/repo", true},
+		{"owner/*", "owner/repo/sub", false},
+		{"owner/**", "owner/repo/sub", true},
+		{"**/*.go", "foo/bar/x.go", true},
+		{"exact", "exact", true},
+		{"exact", "exactly", false},
+		{"prefix/*/file", "prefix/x/file", true},
+		{"prefix/*/file", "prefix/x/y/file", false},
+	}
+	for _, c := range cases {
+		r := storage.ResourceRule{PathPattern: c.pattern}
+		got := r.MatchPath(c.path)
+		if got != c.want {
+			t.Errorf("MatchPath(pattern=%q, path=%q) = %v, want %v", c.pattern, c.path, got, c.want)
+		}
+	}
+}
+
 func TestResourceCache_DeleteCascades(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

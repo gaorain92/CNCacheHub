@@ -10,12 +10,19 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useResourcesStore } from '@/stores/resources'
 import { useAuthStore } from '@/stores/auth'
+import { listResourceTemplates } from '@/api/resources'
+import type { ResourceTemplate } from '@/types/api'
 
 const resources = useResourcesStore()
 const auth = useAuthStore()
 
 // 展开的 rule id
 const expanded = ref<Set<number>>(new Set())
+
+// 模板库（P2#1）
+const templatesOpen = ref(false)
+const templates = ref<ResourceTemplate[]>([])
+const templatesLoading = ref(false)
 
 // 新建 / 编辑 弹窗
 const dialogOpen = ref(false)
@@ -84,6 +91,41 @@ function ttlLabel(sec: number): string {
   if (sec >= 86400) return `${sec / 86400} 天`
   if (sec >= 3600) return `${sec / 3600} 小时`
   return `${sec} 秒`
+}
+
+async function openTemplates(): Promise<void> {
+  templatesOpen.value = true
+  if (templates.value.length === 0) {
+    templatesLoading.value = true
+    try {
+      const resp = await listResourceTemplates()
+      templates.value = resp.items
+    } finally {
+      templatesLoading.value = false
+    }
+  }
+}
+
+async function applyTemplate(t: ResourceTemplate): Promise<void> {
+  // 检查同名 rule
+  if (resources.rules.some((r) => r.name === t.name)) {
+    ElMessage.warning(`已存在同名 rule「${t.name}」，请改名后再试`)
+    return
+  }
+  const r = await resources.create({
+    name: t.name,
+    kind: t.kind,
+    upstreamUrl: t.upstreamUrl,
+    defaultTtlSeconds: 604800,
+    description: t.description,
+    pathPattern: t.pathPattern,
+  } as any)
+  if (r) {
+    ElMessage.success(`已应用模板「${t.name}」`)
+    templatesOpen.value = false
+  } else {
+    ElMessage.error(resources.errorMessage || '创建失败')
+  }
 }
 
 async function openCreate(): Promise<void> {
@@ -207,6 +249,7 @@ function formatBytes(n: number): string {
         <p class="text-sm text-slate-400">白名单 URL 缓存 · GitHub / Hugging Face / Playwright / Terraform / 自定义</p>
       </div>
       <el-button :icon="Refresh" size="small" plain :loading="resources.loading" @click="resources.fetch()">刷新</el-button>
+      <el-button size="small" plain @click="openTemplates">模板库</el-button>
       <el-button type="primary" size="small" :disabled="!auth.isAdmin" @click="openCreate">新增 rule</el-button>
     </header>
 
@@ -248,7 +291,7 @@ function formatBytes(n: number): string {
               <el-tag v-if="!r.enabled" size="small" type="info" effect="plain">disabled</el-tag>
             </div>
             <div class="text-xs text-slate-500 font-mono mt-1 truncate">
-              {{ r.upstreamUrl }} · TTL {{ ttlLabel(r.defaultTtlSeconds) }}
+              {{ r.upstreamUrl }} · pattern: <span class="text-mint">{{ r.pathPattern || '*' }}</span> · TTL {{ ttlLabel(r.defaultTtlSeconds) }}
             </div>
             <div v-if="r.description" class="text-xs text-slate-500 mt-0.5">{{ r.description }}</div>
           </div>
@@ -307,6 +350,40 @@ function formatBytes(n: number): string {
     <div v-if="!auth.isAdmin" class="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-200">
       只读模式，登录管理员后可新增 / 改 / 删 rule 和缓存。
     </div>
+
+    <!-- 模板库 -->
+    <el-dialog v-model="templatesOpen" title="资源加速模板库" width="720px">
+      <div v-if="templatesLoading" class="text-center text-slate-500 py-6">加载中…</div>
+      <div v-else class="space-y-3">
+        <p class="text-sm text-slate-400">推荐配置 · 一键应用</p>
+        <div
+          v-for="t in templates"
+          :key="t.name"
+          class="rounded-2xl border border-white/[.08] bg-white/[.04] p-4 hover:border-mint/30 transition"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-base font-semibold text-slate-100">{{ t.name }}</span>
+                <el-tag size="small" effect="plain">{{ t.kind }}</el-tag>
+                <el-tag size="small" effect="plain">pattern: {{ t.pathPattern }}</el-tag>
+              </div>
+              <div class="text-xs text-slate-400 mt-1">{{ t.description }}</div>
+              <div class="text-xs text-slate-500 font-mono mt-1 truncate">{{ t.upstreamUrl }}</div>
+              <pre class="text-[10px] font-mono text-slate-400 bg-black/40 p-2 rounded mt-2 overflow-x-auto whitespace-pre"><code>{{ t.sample }}</code></pre>
+            </div>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!auth.isAdmin || resources.rules.some((r) => r.name === t.name)"
+              @click="applyTemplate(t)"
+            >
+              {{ resources.rules.some((r) => r.name === t.name) ? '已存在' : '应用' }}
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 新建 / 编辑 rule -->
     <el-dialog v-model="dialogOpen" :title="editingId ? '编辑 Rule' : '新增 Rule'" width="560px" :close-on-click-modal="false">

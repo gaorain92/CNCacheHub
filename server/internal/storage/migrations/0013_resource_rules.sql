@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS resource_rules (
   name               TEXT    NOT NULL UNIQUE,             -- 形如 'github-release' / 'hf-qwen' / 'playwright-browsers'
   kind               TEXT    NOT NULL,                     -- 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
   upstream_url       TEXT    NOT NULL,                     -- 上游地址（无尾斜杠）
+  path_pattern       TEXT    NOT NULL DEFAULT '*',         -- glob 匹配 path（P2#1）；默认匹配所有
   default_ttl_seconds INTEGER NOT NULL DEFAULT 86400,      -- 24h 默认 TTL
   enabled            INTEGER NOT NULL DEFAULT 1,
   description        TEXT    NOT NULL DEFAULT '',

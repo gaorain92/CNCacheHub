@@ -330,6 +330,7 @@ func NewRouter(opts Options) http.Handler {
 		r.Delete("/resources/rules/{id}", resourceRuleDeleteHandler(opts))
 		r.Get("/resources/rules/{id}/cache", resourceCacheListHandler(opts))
 		r.Delete("/resources/cache/{id}", resourceCacheDeleteHandler(opts))
+		r.Get("/resources/templates", resourceTemplatesHandler(opts)) // P2#1
 	})
 
 	// /v2/* — 镜像反代

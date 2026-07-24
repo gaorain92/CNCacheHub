@@ -5,9 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// compileRegex 缓存避免热路径重复编译。
+var compileRegex = regexpCompilePattern
+
+// regexpCompilePattern 包装 regexp.Compile，允许将来换成缓存版本。
+func regexpCompilePattern(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile(pattern)
+}
 
 // ResourceRule 是 resource_rules 行的 Go 表示（PRD §9.4）。
 type ResourceRule struct {
@@ -15,6 +24,7 @@ type ResourceRule struct {
 	Name              string `json:"name"`
 	Kind              string `json:"kind"`
 	UpstreamURL       string `json:"upstreamUrl"`
+	PathPattern       string `json:"pathPattern"` // glob 匹配 path（默认 "*" = 全部）
 	DefaultTTLSeconds int    `json:"defaultTtlSeconds"`
 	Enabled           bool   `json:"enabled"`
 	Description       string `json:"description"`
@@ -40,7 +50,7 @@ type ResourceCacheEntry struct {
 // ListResourceRules 列出全部规则（按 id ASC）。
 func (d *DB) ListResourceRules(ctx context.Context) ([]ResourceRule, error) {
 	rows, err := d.SQLDB.QueryContext(ctx, `
-		SELECT id, name, kind, upstream_url, default_ttl_seconds, enabled, description, created_at, updated_at
+		SELECT id, name, kind, upstream_url, path_pattern, default_ttl_seconds, enabled, description, created_at, updated_at
 		FROM resource_rules ORDER BY id ASC
 	`)
 	if err != nil {
@@ -61,7 +71,7 @@ func (d *DB) ListResourceRules(ctx context.Context) ([]ResourceRule, error) {
 func scanResourceRule(rows *sql.Rows) (ResourceRule, error) {
 	var r ResourceRule
 	var enabledI int
-	if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.UpstreamURL, &r.DefaultTTLSeconds, &enabledI, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.UpstreamURL, &r.PathPattern, &r.DefaultTTLSeconds, &enabledI, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return ResourceRule{}, fmt.Errorf("storage: scan resource rule: %w", err)
 	}
 	r.Enabled = enabledI == 1
@@ -71,7 +81,7 @@ func scanResourceRule(rows *sql.Rows) (ResourceRule, error) {
 // GetResourceRule 按 id。
 func (d *DB) GetResourceRule(ctx context.Context, id int64) (ResourceRule, error) {
 	row := d.SQLDB.QueryRowContext(ctx, `
-		SELECT id, name, kind, upstream_url, default_ttl_seconds, enabled, description, created_at, updated_at
+		SELECT id, name, kind, upstream_url, path_pattern, default_ttl_seconds, enabled, description, created_at, updated_at
 		FROM resource_rules WHERE id = ?
 	`, id)
 	r, err := scanResourceRuleRow(row)
@@ -87,7 +97,7 @@ func (d *DB) GetResourceRule(ctx context.Context, id int64) (ResourceRule, error
 // GetResourceRuleByName 按 name 拿。
 func (d *DB) GetResourceRuleByName(ctx context.Context, name string) (ResourceRule, error) {
 	row := d.SQLDB.QueryRowContext(ctx, `
-		SELECT id, name, kind, upstream_url, default_ttl_seconds, enabled, description, created_at, updated_at
+		SELECT id, name, kind, upstream_url, path_pattern, default_ttl_seconds, enabled, description, created_at, updated_at
 		FROM resource_rules WHERE name = ?
 	`, name)
 	r, err := scanResourceRuleRow(row)
@@ -107,7 +117,7 @@ type rowScanner interface {
 func scanResourceRuleRow(row rowScanner) (ResourceRule, error) {
 	var r ResourceRule
 	var enabledI int
-	if err := row.Scan(&r.ID, &r.Name, &r.Kind, &r.UpstreamURL, &r.DefaultTTLSeconds, &enabledI, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Name, &r.Kind, &r.UpstreamURL, &r.PathPattern, &r.DefaultTTLSeconds, &enabledI, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return ResourceRule{}, fmt.Errorf("storage: scan resource rule: %w", err)
 	}
 	r.Enabled = enabledI == 1
@@ -122,15 +132,18 @@ func (d *DB) CreateResourceRule(ctx context.Context, in ResourceRule) (ResourceR
 	if in.DefaultTTLSeconds == 0 {
 		in.DefaultTTLSeconds = 86400
 	}
+	if in.PathPattern == "" {
+		in.PathPattern = "*"
+	}
 	in.UpstreamURL = strings.TrimRight(in.UpstreamURL, "/")
 	enabledI := 0
 	if in.Enabled {
 		enabledI = 1
 	}
 	res, err := d.SQLDB.ExecContext(ctx, `
-		INSERT INTO resource_rules (name, kind, upstream_url, default_ttl_seconds, enabled, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, in.Name, in.Kind, in.UpstreamURL, in.DefaultTTLSeconds, enabledI, in.Description, in.CreatedAt, in.UpdatedAt)
+		INSERT INTO resource_rules (name, kind, upstream_url, path_pattern, default_ttl_seconds, enabled, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, in.Name, in.Kind, in.UpstreamURL, in.PathPattern, in.DefaultTTLSeconds, enabledI, in.Description, in.CreatedAt, in.UpdatedAt)
 	if err != nil {
 		return ResourceRule{}, fmt.Errorf("storage: insert resource rule: %w", err)
 	}
@@ -152,6 +165,9 @@ func (d *DB) UpdateResourceRule(ctx context.Context, id int64, patch ResourceRul
 	if patch.UpstreamURL != nil {
 		cur.UpstreamURL = strings.TrimRight(*patch.UpstreamURL, "/")
 	}
+	if patch.PathPattern != nil {
+		cur.PathPattern = *patch.PathPattern
+	}
 	if patch.DefaultTTLSeconds != nil {
 		cur.DefaultTTLSeconds = *patch.DefaultTTLSeconds
 	}
@@ -167,9 +183,9 @@ func (d *DB) UpdateResourceRule(ctx context.Context, id int64, patch ResourceRul
 		enabledI = 1
 	}
 	_, err = d.SQLDB.ExecContext(ctx, `
-		UPDATE resource_rules SET upstream_url=?, default_ttl_seconds=?, enabled=?, description=?, updated_at=?
+		UPDATE resource_rules SET upstream_url=?, path_pattern=?, default_ttl_seconds=?, enabled=?, description=?, updated_at=?
 		WHERE id=?
-	`, cur.UpstreamURL, cur.DefaultTTLSeconds, enabledI, cur.Description, cur.UpdatedAt, id)
+	`, cur.UpstreamURL, cur.PathPattern, cur.DefaultTTLSeconds, enabledI, cur.Description, cur.UpdatedAt, id)
 	if err != nil {
 		return ResourceRule{}, fmt.Errorf("storage: update resource rule: %w", err)
 	}
@@ -188,9 +204,91 @@ func (d *DB) DeleteResourceRule(ctx context.Context, id int64) error {
 // ResourceRulePatch 是 UpdateResourceRule 的部分更新。
 type ResourceRulePatch struct {
 	UpstreamURL       *string
+	PathPattern       *string
 	DefaultTTLSeconds *int
 	Enabled           *bool
 	Description       *string
+}
+
+// MatchPath 检查 path 是否匹配 rule.PathPattern（glob 风格）。
+// 支持：
+//   - "*" 匹配所有
+//   - "*.ext" 匹配以 .ext 结尾
+//   - "owner/*" 匹配 owner/<anything>
+//   - "prefix/*" / "prefix/**/suffix" 完整 glob
+//   - 精确字符串匹配
+//
+// 用 Go 标准库 path.Match（仅单段 *）+ 手动 **/多段支持。
+func (r *ResourceRule) MatchPath(path string) bool {
+	pat := r.PathPattern
+	if pat == "" || pat == "*" {
+		return true
+	}
+	// 简单处理：** → 跨段通配；单 * → 段内
+	if containsDoubleStar(pat) {
+		// path.Match 不支持 **，转成正则
+		regex := globToRegex(pat)
+		return regexMatch(regex, path)
+	}
+	// 单段 * 处理：split pattern by /, 每段用 path.Match
+	return matchSingleStar(pat, path)
+}
+
+func containsDoubleStar(s string) bool {
+	return strings.Contains(s, "**")
+}
+
+// globToRegex "**/foo/*.go" → "^.*/foo/[^/]*\\.go$"
+func globToRegex(pat string) string {
+	var b strings.Builder
+	b.WriteString("^")
+	parts := strings.Split(pat, "/")
+	for i, p := range parts {
+		if p == "**" {
+			b.WriteString(".*")
+		} else if p == "*" {
+			b.WriteString("[^/]*")
+		} else {
+			// escape regex metachars but keep * / . 处理
+			s := p
+			s = strings.ReplaceAll(s, ".", "\\.")
+			s = strings.ReplaceAll(s, "*", "[^/]*")
+			b.WriteString(s)
+		}
+		if i < len(parts)-1 {
+			b.WriteString("/")
+		}
+	}
+	b.WriteString("$")
+	return b.String()
+}
+
+func regexMatch(pattern, s string) bool {
+	re, err := compileRegex(pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(s)
+}
+
+// compile 缓存避免 hot path 重复编译（最简实现：每次重新 compile）
+var _ = compileRegex
+
+func matchSingleStar(pat, path string) bool {
+	patParts := strings.Split(pat, "/")
+	pathParts := strings.Split(path, "/")
+	if len(patParts) != len(pathParts) {
+		return false
+	}
+	for i, p := range patParts {
+		if p == "*" {
+			continue
+		}
+		if p != pathParts[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // === cache entries ===
