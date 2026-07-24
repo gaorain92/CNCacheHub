@@ -383,3 +383,19 @@ func (d *DB) DeleteResourceCacheEntry(ctx context.Context, id int64) error {
 	}
 	return nil
 }
+
+// ResourceStats 聚合所有 resource_cache 条目（metrics 端点用）。
+type ResourceStatsSummary struct {
+	Total      int   `json:"total"`
+	TotalBytes int64 `json:"totalBytes"`
+}
+
+// ResourceStats 拿全表聚合。
+func (d *DB) ResourceStats(ctx context.Context) (ResourceStatsSummary, error) {
+	row := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM resource_cache_entries`)
+	var s ResourceStatsSummary
+	if err := row.Scan(&s.Total, &s.TotalBytes); err != nil {
+		return s, fmt.Errorf("storage: resource stats: %w", err)
+	}
+	return s, nil
+}

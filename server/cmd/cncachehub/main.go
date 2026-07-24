@@ -40,6 +40,7 @@ import (
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	"github.com/cncachehub/server/internal/diagnostics"
 	logpkg "github.com/cncachehub/server/internal/log"
+	"github.com/cncachehub/server/internal/metrics"
 	"github.com/cncachehub/server/internal/preheat"
 	"github.com/cncachehub/server/internal/proxy"
 	"github.com/cncachehub/server/internal/storage"
@@ -246,6 +247,13 @@ func run() error {
 		DeleteResourceRule:       db.DeleteResourceRule,
 		ListResourceCache:        db.ListResourceCache,
 		DeleteResourceCacheEntry: db.DeleteResourceCacheEntry,
+		// Prometheus metrics（P2#2）
+		MetricsDB:         db,
+		MetricsDNSServer:  dnsSrv,
+		MetricsUpstreams:  makeMetricsUpstreams(upstreamHealth),
+		MetricsVersion:    version,
+		MetricsCommit:     commit,
+		MetricsStartTime:  cfg.StartTime,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
@@ -1254,4 +1262,37 @@ func readDockerDaemonConfig() ([]string, bool) {
 		}
 	}
 	return dc.RegistryMirrors, insecure
+}
+
+// makeMetricsUpstreams 包装 *upstreamHealth → []metrics.UpstreamStatus。
+func makeMetricsUpstreams(h *upstreamHealth) func() []metrics.UpstreamStatus {
+	return func() []metrics.UpstreamStatus {
+		snap := h.Snapshot()
+		// upstreamHealth.Snapshot() 当前是单条 snapshot（一个主 upstream），
+		// 但为了 Prometheus 维度化好，每个上游都开一条
+		out := []metrics.UpstreamStatus{
+			{
+				Name:      registryHostname(snap.URL),
+				URL:       snap.URL,
+				Reachable: snap.Reachable,
+			},
+		}
+		return out
+	}
+}
+
+// registryHostname 从 URL 提取主机名（去掉 scheme/port）。
+func registryHostname(u string) string {
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	if i := strings.Index(u, "/"); i >= 0 {
+		u = u[:i]
+	}
+	if i := strings.Index(u, ":"); i >= 0 {
+		u = u[:i]
+	}
+	if u == "" {
+		return "unknown"
+	}
+	return u
 }

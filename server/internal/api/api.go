@@ -26,6 +26,7 @@ import (
 
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	"github.com/cncachehub/server/internal/diagnostics"
+	"github.com/cncachehub/server/internal/metrics"
 	"github.com/cncachehub/server/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -137,6 +138,19 @@ type Options struct {
 	DeleteResourceRule       func(ctx context.Context, id int64) error
 	ListResourceCache        func(ctx context.Context, ruleID int64, limit int) ([]storage.ResourceCacheEntry, error)
 	DeleteResourceCacheEntry func(ctx context.Context, id int64) error
+	// Prometheus metrics 注入（P2#2）
+	MetricsDB         interface {
+		DashboardSummary(ctx context.Context) (storage.DashboardSummary, error)
+		ListResourceRules(ctx context.Context) ([]storage.ResourceRule, error)
+		ResourceStats(ctx context.Context) (storage.ResourceStatsSummary, error)
+	}
+	MetricsDNSServer interface {
+		Stats() dnsserver.Stats
+	}
+	MetricsUpstreams func() []metrics.UpstreamStatus
+	MetricsVersion   string
+	MetricsCommit    string
+	MetricsStartTime time.Time
 }
 
 
@@ -332,6 +346,9 @@ func NewRouter(opts Options) http.Handler {
 		r.Delete("/resources/cache/{id}", resourceCacheDeleteHandler(opts))
 		r.Get("/resources/templates", resourceTemplatesHandler(opts)) // P2#1
 	})
+
+	// Prometheus metrics 端点（P2#2）— 公开（Prometheus scrape 习惯）
+	r.Get("/metrics", metricsHandler(opts))
 
 	// /v2/* — 镜像反代
 	if opts.ProxyHandler != nil {
