@@ -117,3 +117,69 @@ func TestSetMany_All(t *testing.T) {
 		t.Errorf("reserve_space_gb = %q", v)
 	}
 }
+
+// TestGetMany_Existing 测试批量读 — 命中已 seed 的 key。
+func TestGetMany_Existing(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	got, err := db.GetMany(ctx, SettingSmallVPSOpt, SettingReserveSpaceGB, SettingMaxObjectSizeMB)
+	if err != nil {
+		t.Fatalf("GetMany: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3 (including missing keys)", len(got))
+	}
+	// seed 过的 key 应该有值
+	if got[SettingSmallVPSOpt] == "" {
+		t.Error("small_vps_opt should be seeded")
+	}
+}
+
+// TestGetMany_AllMissing 测试批量读全部不存在的 key → 都返回空字符串。
+func TestGetMany_AllMissing(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	got, err := db.GetMany(ctx, "access_control_enabled", "access_control_token", "access_control_ip_whitelist")
+	if err != nil {
+		t.Fatalf("GetMany: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	for k, v := range got {
+		if v != "" {
+			t.Errorf("missing key %s should be empty, got %q", k, v)
+		}
+	}
+}
+
+// TestGetMany_Empty 测试零 key 边界。
+func TestGetMany_Empty(t *testing.T) {
+	dir := newTempDataDir(t)
+	ctx := context.Background()
+	db, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	got, err := db.GetMany(ctx)
+	if err != nil {
+		t.Fatalf("GetMany: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("len = %d, want 0", len(got))
+	}
+}

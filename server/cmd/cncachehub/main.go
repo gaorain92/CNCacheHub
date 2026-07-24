@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cncachehub/server/internal/access"
 	"github.com/cncachehub/server/internal/api"
 	"github.com/cncachehub/server/internal/cache"
 	"github.com/cncachehub/server/internal/config"
@@ -103,6 +104,19 @@ func run() error {
 	if err := syncEnvToSettings(rootCtx, db, &cfg); err != nil {
 		return fmt.Errorf("sync env to settings: %w", err)
 	}
+
+	// 3c. 初始化 access control Resolver（PRD §9.7.2 P2#4）。
+	// 从 DB 读最新 4 个 key；admin PUT 改值后通过 set() 重新读。
+	accessGet, accessSet := access.MutableResolver(loadAccessConfig(rootCtx, db))
+	accessReload := func() {
+		accessSet(loadAccessConfig(rootCtx, db))
+	}
+	logpkg.Info("access control ready",
+		"enabled", accessGet().Enabled,
+		"token_set", accessGet().Token != "",
+		"ip_whitelist_count", len(accessGet().IPWhitelist),
+		"loopback_bypass", accessGet().LoopbackBypass,
+	)
 
 	// 4. 初始化 cache + 上游 + proxy。
 	// 4a. 优先从 DB 读 settings（UI 改值后重启会保留），fallback 到 cfg。
@@ -269,6 +283,9 @@ func run() error {
 			CacheTotalGB: cfg.CacheTotalGB,
 			// LogPath 留空（server 走 slog stderr，没落文件；未来加文件日志时填上）
 		},
+		// 代理访问控制（P2#4 / PRD §9.7.2）— Resolver + 热重载回调
+		AccessControlResolve: accessGet,
+		AccessControlReload:  accessReload,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
@@ -636,6 +653,28 @@ func syncEnvToSettings(ctx context.Context, db *storage.DB, cfg *config.Config) 
 		}
 	}
 	return nil
+}
+
+// loadAccessConfig 从 DB 读 4 个 access control key，构造 access.Config。
+//
+// 任何 key 缺失 = 对应默认值。Enabled/LoopbackBypass 默认 false/false 但实际上 UI 默认开 LoopbackBypass。
+func loadAccessConfig(ctx context.Context, db *storage.DB) access.Config {
+	settings, err := db.GetMany(ctx,
+		storage.SettingAccessControlEnabled,
+		storage.SettingAccessControlToken,
+		storage.SettingAccessControlIPWhitelist,
+		storage.SettingAccessControlLoopbackBypass,
+	)
+	if err != nil {
+		logpkg.Warn("load access control config", "err", err.Error())
+		return access.Config{LoopbackBypass: true} // fail-open + loopback bypass
+	}
+	return access.Config{
+		Enabled:        settings[storage.SettingAccessControlEnabled] == "true",
+		Token:          settings[storage.SettingAccessControlToken],
+		IPWhitelist:    access.ParseCIDRList(settings[storage.SettingAccessControlIPWhitelist]),
+		LoopbackBypass: settings[storage.SettingAccessControlLoopbackBypass] != "false", // 默认 true
+	}
 }
 
 func boolToStr(b bool) string {

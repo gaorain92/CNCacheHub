@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cncachehub/server/internal/access"
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	"github.com/cncachehub/server/internal/diagnostics"
 	"github.com/cncachehub/server/internal/metrics"
@@ -153,6 +154,11 @@ type Options struct {
 	MetricsStartTime time.Time
 	// 诊断包导出（P2#3）— 注入 BundleSource，handler 直接调 diagnostics.WriteBundle。
 	BundleSource diagnostics.BundleSource
+	// 代理访问控制（P2#4 / PRD §9.7.2）— 给 /v2/* 和 /r/* 用。
+	// nil 表示完全开放（默认）。
+	AccessControlResolve access.Resolver
+	// AccessControlReload 重新从 DB 读最新配置（写 DB 后由 PUT handler 调）。
+	AccessControlReload func()
 }
 
 
@@ -348,6 +354,9 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/resources/rules/{id}/cache", resourceCacheListHandler(opts))
 		r.Delete("/resources/cache/{id}", resourceCacheDeleteHandler(opts))
 		r.Get("/resources/templates", resourceTemplatesHandler(opts)) // P2#1
+		// 代理访问控制（P2#4 / PRD §9.7.2）
+		r.Get("/access-control", accessControlGetHandler(opts))
+		r.Put("/access-control", accessControlPutHandler(opts))
 	})
 
 	// Prometheus metrics 端点（P2#2）— 公开（Prometheus scrape 习惯）
@@ -355,14 +364,22 @@ func NewRouter(opts Options) http.Handler {
 
 	// /v2/* — 镜像反代
 	if opts.ProxyHandler != nil {
-		r.Handle("/v2", opts.ProxyHandler)
-		r.Handle("/v2/*", opts.ProxyHandler)
+		var v2Chain chi.Router = r
+		if opts.AccessControlResolve != nil {
+			v2Chain = v2Chain.With(access.Middleware(opts.AccessControlResolve))
+		}
+		v2Chain.Handle("/v2", opts.ProxyHandler)
+		v2Chain.Handle("/v2/*", opts.ProxyHandler)
 	}
 
 	// /r/* — 资源加速反代（PRD §9.4）
 	if opts.ResourceHandler != nil {
-		r.Handle("/r", opts.ResourceHandler)
-		r.Handle("/r/*", opts.ResourceHandler)
+		var rChain chi.Router = r
+		if opts.AccessControlResolve != nil {
+			rChain = rChain.With(access.Middleware(opts.AccessControlResolve))
+		}
+		rChain.Handle("/r", opts.ResourceHandler)
+		rChain.Handle("/r/*", opts.ResourceHandler)
 	} else {
 		// 注入缺失：返回 503
 		r.Get("/v2", func(w http.ResponseWriter, r *http.Request) {

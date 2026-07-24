@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,11 @@ const (
 	SettingCacheTotalGB     = "cache_total_gb"       // 数字
 	SettingCleanupTriggerPct = "cleanup_trigger_pct" // 数字（百分比 0-100）
 	SettingCleanupTargetPct  = "cleanup_target_pct"  // 数字（百分比 0-100）
+	// 代理访问控制（P2#4 / PRD §9.7.2）
+	SettingAccessControlEnabled        = "access_control_enabled"         // "true"/"false"
+	SettingAccessControlToken          = "access_control_token"           // 任意字符串（启用时为空就视为 disabled）
+	SettingAccessControlIPWhitelist    = "access_control_ip_whitelist"    // 逗号分隔 CIDR（例 "10.0.0.0/8,192.168.0.0/16"）
+	SettingAccessControlLoopbackBypass = "access_control_loopback_bypass" // "true"/"false"，127/8 永远放行（默认 true）
 )
 
 // GetSetting 按 key 查。
@@ -82,6 +88,40 @@ func (d *DB) GetString(ctx context.Context, key, fallback string) string {
 		return fallback
 	}
 	return s.Value
+}
+
+// GetMany 批量读（不存在返回空字符串）。
+// 用于 access control 一次读 4 个 key。
+func (d *DB) GetMany(ctx context.Context, keys ...string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	// 构造 IN (?, ?, ?) — 用 placeholder 避免注入
+	placeholders := make([]string, len(keys))
+	args := make([]any, len(keys))
+	for i, k := range keys {
+		placeholders[i] = "?"
+		args[i] = k
+	}
+	q := `SELECT key, value FROM system_settings WHERE key IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := d.SQLDB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	// 先把空值放进去（保证返回的 map 包含所有请求的 key）
+	for _, k := range keys {
+		out[k] = ""
+	}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }
 
 // SetMany 批量写。
