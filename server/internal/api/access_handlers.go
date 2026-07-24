@@ -51,7 +51,7 @@ func accessControlGetHandler(opts Options) http.HandlerFunc {
 			storage.SettingAccessControlLoopbackBypass,
 		)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			writeInternalErr(w, r, "db_error", err)
 			return
 		}
 
@@ -131,7 +131,7 @@ func accessControlPutHandler(opts Options) http.HandlerFunc {
 		// 拿 userID 写 audit
 		_, uid, _ := opts.SessionUserRole(r.Context(), r)
 		if err := acDB.SetMany(r.Context(), kvs, uid); err != nil {
-			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			writeInternalErr(w, r, "db_error", err)
 			return
 		}
 

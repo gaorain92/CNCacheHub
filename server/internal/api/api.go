@@ -515,6 +515,23 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+// writeInternalErr 5xx 错误的统一处理：log 详细 err，返 generic message。
+//
+// 5xx（500/502/503 等）错误可能含敏感信息（SQL 错误、文件路径、内部状态），
+// 不应该直接返给客户端。详细 err 走 log（结构化 + 含 request_id 便于追踪），
+// 客户端只看到 "internal error" 跟一个稳定的 code。
+//
+// 用法：writeInternalErr(w, r, "session_create_failed", err)
+func writeInternalErr(w http.ResponseWriter, r *http.Request, code string, err error) {
+	reqID := chimw.GetReqID(r.Context())
+	logpkg.Error("api internal error",
+		"request_id", reqID,
+		"code", code,
+		"err", err.Error(),
+	)
+	writeError(w, http.StatusInternalServerError, code, "internal error")
+}
+
 // httpError 是 handler 内部可选用的 error 类型：携带 HTTP status。
 type httpError struct {
 	Status  int

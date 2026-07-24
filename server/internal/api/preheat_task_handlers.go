@@ -30,7 +30,7 @@ func preheatTaskListHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := opts.ListPreheatTasks(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "preheat_tasks_list_failed", err.Error())
+			writeInternalErr(w, r, "preheat_tasks_list_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, PreheatTaskResponse{Items: items, Total: len(items)})
@@ -83,7 +83,7 @@ func preheatTaskCreateHandler(opts Options) http.HandlerFunc {
 			CronExpression: req.CronExpression, MaxRetries: req.MaxRetries, Enabled: enabled,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "preheat_task_create_failed", err.Error())
+			writeInternalErr(w, r, "preheat_task_create_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, task)
@@ -102,7 +102,7 @@ func preheatTaskDeleteHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.DeletePreheatTask(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "preheat_task_delete_failed", err.Error())
+			writeInternalErr(w, r, "preheat_task_delete_failed", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -127,7 +127,7 @@ func preheatTaskRunHandler(opts Options) http.HandlerFunc {
 		}
 		task, err := opts.GetPreheatTask(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "preheat_task_get_failed", err.Error())
+			writeInternalErr(w, r, "preheat_task_get_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, task)
@@ -165,7 +165,7 @@ func preheatTaskItemsHandler(opts Options) http.HandlerFunc {
 		}
 		items, err := opts.ListPreheatItems(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "preheat_items_list_failed", err.Error())
+			writeInternalErr(w, r, "preheat_items_list_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})

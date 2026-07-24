@@ -75,8 +75,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// udp listen — 失败要清理
 	udpErrCh := make(chan error, 1)
+	// 同上：local 变量，避 closure nil deref
+	udpSrv := s.udpSrv
 	go func() {
-		if err := s.udpSrv.ListenAndServe(); err != nil {
+		if err := udpSrv.ListenAndServe(); err != nil {
 			udpErrCh <- err
 		}
 	}()
@@ -89,8 +91,12 @@ func (s *Server) Start(ctx context.Context) error {
 		// ok
 	}
 	// tcp listen
+	//
+	// 注意：把 s.tcpSrv 复制到 local 变量！closure 是延迟求值 — 如果 goroutine
+	// 真跑时 s.tcpSrv 已被 Stop() 设为 nil，这里会 SEGV。
+	tcpSrv := s.tcpSrv
 	go func() {
-		if err := s.tcpSrv.ListenAndServe(); err != nil {
+		if err := tcpSrv.ListenAndServe(); err != nil {
 			s.log.Warn("dns tcp serve ended", "err", err)
 		}
 	}()

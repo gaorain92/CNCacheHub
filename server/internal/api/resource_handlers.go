@@ -36,7 +36,7 @@ func resourceRuleListHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := opts.ListResourceRules(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_rules_list_failed", err.Error())
+			writeInternalErr(w, r, "resource_rules_list_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, ResourceRuleResponse{Items: items, Total: len(items)})
@@ -78,7 +78,7 @@ func resourceRuleCreateHandler(opts Options) http.HandlerFunc {
 			DefaultTTLSeconds: req.DefaultTTLSeconds, Description: req.Description, Enabled: enabled,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_rule_create_failed", err.Error())
+			writeInternalErr(w, r, "resource_rule_create_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, rule)
@@ -106,7 +106,7 @@ func resourceRulePatchHandler(opts Options) http.HandlerFunc {
 		}
 		rule, err := opts.UpdateResourceRule(r.Context(), id, patch)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_rule_update_failed", err.Error())
+			writeInternalErr(w, r, "resource_rule_update_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, rule)
@@ -124,7 +124,7 @@ func resourceRuleDeleteHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.DeleteResourceRule(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_rule_delete_failed", err.Error())
+			writeInternalErr(w, r, "resource_rule_delete_failed", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -146,7 +146,7 @@ func resourceCacheListHandler(opts Options) http.HandlerFunc {
 		}
 		items, err := opts.ListResourceCache(r.Context(), ruleID, limit)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_cache_list_failed", err.Error())
+			writeInternalErr(w, r, "resource_cache_list_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
@@ -164,7 +164,7 @@ func resourceCacheDeleteHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.DeleteResourceCacheEntry(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "resource_cache_delete_failed", err.Error())
+			writeInternalErr(w, r, "resource_cache_delete_failed", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

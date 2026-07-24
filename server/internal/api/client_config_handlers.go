@@ -195,7 +195,7 @@ func generateClientConfigHandler(opts Options) http.HandlerFunc {
 		// 找上游
 		regs, err := opts.ListRegistries(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "registries_query_failed", err.Error())
+			writeInternalErr(w, r, "registries_query_failed", err)
 			return
 		}
 		var reg *storage.Registry
@@ -686,7 +686,7 @@ func generateClientConfigBundleHandler(opts Options) http.HandlerFunc {
 		}
 		regs, err := opts.ListRegistries(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "registries_query_failed", err.Error())
+			writeInternalErr(w, r, "registries_query_failed", err)
 			return
 		}
 		base := clientBaseURL(r)

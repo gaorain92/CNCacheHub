@@ -18,7 +18,7 @@ func settingsGetHandler(opts Options) http.HandlerFunc {
 		}
 		s, err := opts.GetSettings(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "settings_query_failed", err.Error())
+			writeInternalErr(w, r, "settings_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, s)
@@ -72,7 +72,7 @@ func settingsPatchHandler(opts Options) http.HandlerFunc {
 		}
 		updated, err := opts.UpdateSettings(r.Context(), patch, u.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "settings_update_failed", err.Error())
+			writeInternalErr(w, r, "settings_update_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, updated)
@@ -85,6 +85,9 @@ func settingsPatchHandler(opts Options) http.HandlerFunc {
 // 让 UI 显示「预计释放 N 条 / X MB」再二次确认。
 func cleanupDryRunHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(opts, w, r) {
+			return
+		}
 		if opts.DryRunCleanup == nil {
 			writeError(w, http.StatusServiceUnavailable, "cleanup_unavailable", "cleanup not configured")
 			return
@@ -97,7 +100,7 @@ func cleanupDryRunHandler(opts Options) http.HandlerFunc {
 		}
 		report, err := opts.DryRunCleanup(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "cleanup_dry_run_failed", err.Error())
+			writeInternalErr(w, r, "cleanup_dry_run_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, report)

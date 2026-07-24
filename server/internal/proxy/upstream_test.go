@@ -113,11 +113,9 @@ func TestRoundTrip_NoAuthNeeded(t *testing.T) {
 
 // TestRoundTrip_TokenDance 验证 401 + Www-Authenticate 时拿 token 重试。
 func TestRoundTrip_TokenDance(t *testing.T) {
-	var (
-		registryHits    atomic.Int32
-		authHits        atomic.Int32
-		gotAuthToken    atomic.Value
-	)
+	registryHits := &atomic.Int32{}
+	authHits := &atomic.Int32{}
+	gotAuthToken := &atomic.Value{}
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registryHits.Add(1)
 		auth := r.Header.Get("Authorization")
@@ -165,6 +163,8 @@ func TestRoundTrip_TokenDance(t *testing.T) {
 	// 这里直接调 fetchToken 测一遍。
 	_, _ = authSrv, up
 	_ = registryHits
+	_ = authHits
+	_ = gotAuthToken
 
 	// 直接用 fetchToken 测
 	token, err := up.fetchToken(context.Background(), authSrv.URL+"/token", "registry.example", "repository:foo:pull")

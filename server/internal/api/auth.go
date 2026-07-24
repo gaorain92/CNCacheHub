@@ -156,7 +156,7 @@ func loginHandler(opts Options) http.HandlerFunc {
 		}
 		sess, err := opts.AuthDB.CreateSession(r.Context(), u.ID, ip, ua, SessionTTL)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "session_create_failed", err.Error())
+			writeInternalErr(w, r, "session_create_failed", err)
 			return
 		}
 		_ = opts.AuthDB.UpdateUserLastLogin(r.Context(), u.ID)
@@ -254,7 +254,7 @@ func changePasswordHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.AuthDB.UpdateUserPassword(r.Context(), uid, req.NewPassword); err != nil {
-			writeError(w, http.StatusInternalServerError, "password_update_failed", err.Error())
+			writeInternalErr(w, r, "password_update_failed", err)
 			return
 		}
 		_ = opts.AuthDB.WriteAudit(r.Context(), AuthAudit{UserID: uid, Action: "change_password", IP: ip, UserAgent: ua, Status: "ok"})
@@ -271,7 +271,7 @@ func initStatusHandler(opts Options) http.HandlerFunc {
 		}
 		n, err := opts.AuthDB.CountUsers(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "count_users_failed", err.Error())
+			writeInternalErr(w, r, "count_users_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, InitStatusResponse{Initialized: n > 0, UserCount: n})
@@ -307,7 +307,7 @@ func initHandler(opts Options) http.HandlerFunc {
 				writeError(w, http.StatusForbidden, "already_initialized", "admin user already exists")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "user_create_failed", err.Error())
+			writeInternalErr(w, r, "user_create_failed", err)
 			return
 		}
 		ip := clientIP(r)
@@ -316,7 +316,7 @@ func initHandler(opts Options) http.HandlerFunc {
 		// 自动登录
 		sess, err := opts.AuthDB.CreateSession(r.Context(), u.ID, ip, ua, SessionTTL)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "session_create_failed", err.Error())
+			writeInternalErr(w, r, "session_create_failed", err)
 			return
 		}
 		setSessionCookie(w, sess.Token, SessionTTL)

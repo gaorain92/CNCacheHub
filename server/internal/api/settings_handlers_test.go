@@ -23,6 +23,9 @@ func settingsTestHandler(t *testing.T) (http.Handler, *storage.DB) {
 func newSettingsHandler(db *storage.DB) http.Handler {
 	return NewRouter(Options{
 		AuthDB: db,
+		SessionUserRole: func(ctx context.Context, r *http.Request) (string, int64, error) {
+			return "admin", 1, nil
+		},
 		GetSettings: func(ctx context.Context) (SystemSettings, error) {
 			s, err := db.ListSettings(ctx)
 			if err != nil {

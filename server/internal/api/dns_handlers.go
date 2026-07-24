@@ -37,7 +37,7 @@ func dnsConfigGetHandler(opts Options) http.HandlerFunc {
 		}
 		cfg, err := opts.GetDNSConfig(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "dns_config_get_failed", err.Error())
+			writeInternalErr(w, r, "dns_config_get_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, DNSConfigResponse{
@@ -99,7 +99,7 @@ func dnsConfigPatchHandler(opts Options) http.HandlerFunc {
 		}
 		cfg, err := opts.UpdateDNSConfig(r.Context(), patch)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "dns_config_update_failed", err.Error())
+			writeInternalErr(w, r, "dns_config_update_failed", err)
 			return
 		}
 		// Reload DNS server
@@ -111,7 +111,7 @@ func dnsConfigPatchHandler(opts Options) http.HandlerFunc {
 			DomainRules: cfg.DomainRules,
 			UpdatedAt:   time.Unix(cfg.UpdatedAt, 0),
 		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "dns_reload_failed", err.Error())
+			writeInternalErr(w, r, "dns_reload_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, DNSConfigResponse{
@@ -228,7 +228,13 @@ func dnsStatsHandler(opts Options) http.HandlerFunc {
 }
 
 // requireAdmin 简易 RBAC 校验。
+//
+// nil-safe：opts.SessionUserRole == nil 时返 503（不是 panic）。
 func requireAdmin(opts Options, w http.ResponseWriter, r *http.Request) bool {
+	if opts.SessionUserRole == nil {
+		writeError(w, http.StatusServiceUnavailable, "auth_unavailable", "session user role not configured")
+		return false
+	}
 	role, _, _ := opts.SessionUserRole(r.Context(), r)
 	if role != "admin" {
 		writeError(w, http.StatusForbidden, "admin_required", "this endpoint requires admin")

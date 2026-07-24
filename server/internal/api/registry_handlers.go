@@ -27,7 +27,7 @@ func registriesListHandler(opts Options) http.HandlerFunc {
 		}
 		regs, err := opts.ListRegistries(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "registries_query_failed", err.Error())
+			writeInternalErr(w, r, "registries_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -80,7 +80,7 @@ func registryPatchHandler(opts Options) http.HandlerFunc {
 		// 1. enabled（如果传了）
 		if patch.Enabled != nil {
 			if err := opts.SetRegistryEnabled(r.Context(), name, *patch.Enabled); err != nil {
-				writeError(w, http.StatusInternalServerError, "registry_update_failed", err.Error())
+				writeInternalErr(w, r, "registry_update_failed", err)
 				return
 			}
 		}
@@ -101,7 +101,7 @@ func registryPatchHandler(opts Options) http.HandlerFunc {
 			}
 			ct, err := opts.CredentialCipher.Encrypt([]byte(*patch.Password))
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "encrypt_failed", err.Error())
+				writeInternalErr(w, r, "encrypt_failed", err)
 				return
 			}
 			credPatch.Password = &ct
@@ -114,7 +114,7 @@ func registryPatchHandler(opts Options) http.HandlerFunc {
 			}
 			ct, err := opts.CredentialCipher.Encrypt([]byte(*patch.Token))
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "encrypt_failed", err.Error())
+				writeInternalErr(w, r, "encrypt_failed", err)
 				return
 			}
 			credPatch.Token = &ct
@@ -134,7 +134,7 @@ func registryPatchHandler(opts Options) http.HandlerFunc {
 				return
 			}
 			if err := opts.SetRegistryCredentials(r.Context(), name, credPatch); err != nil {
-				writeError(w, http.StatusInternalServerError, "credential_update_failed", err.Error())
+				writeInternalErr(w, r, "credential_update_failed", err)
 				return
 			}
 		}

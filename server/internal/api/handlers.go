@@ -19,7 +19,7 @@ func upstreamsHandler(opts Options) http.HandlerFunc {
 		}
 		ups, err := opts.GetUpstreams(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "upstreams_query_failed", err.Error())
+			writeInternalErr(w, r, "upstreams_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -45,7 +45,7 @@ func daemonJSONHandler(opts Options) http.HandlerFunc {
 		}
 		ups, err := opts.GetUpstreams(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "upstreams_query_failed", err.Error())
+			writeInternalErr(w, r, "upstreams_query_failed", err)
 			return
 		}
 		if len(ups) == 0 {
@@ -71,7 +71,7 @@ func daemonJSONHandler(opts Options) http.HandlerFunc {
 		}
 		b, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "marshal_failed", err.Error())
+			writeInternalErr(w, r, "marshal_failed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -94,7 +94,7 @@ func cacheEntriesHandler(opts Options) http.HandlerFunc {
 		query := r.URL.Query().Get("q")
 		items, total, err := opts.GetCacheEntries(r.Context(), page, pageSize, query)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "cache_query_failed", err.Error())
+			writeInternalErr(w, r, "cache_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -109,6 +109,9 @@ func cacheEntriesHandler(opts Options) http.HandlerFunc {
 // cacheDeleteHandler DELETE /api/cache/entries/:id
 func cacheDeleteHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(opts, w, r) {
+			return
+		}
 		if opts.DeleteCacheEntry == nil {
 			writeError(w, http.StatusServiceUnavailable, "cache_unavailable", "cache not configured")
 			return
@@ -121,7 +124,7 @@ func cacheDeleteHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.DeleteCacheEntry(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "cache_delete_failed", err.Error())
+			writeInternalErr(w, r, "cache_delete_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -140,7 +143,7 @@ func cleanupTasksHandler(opts Options) http.HandlerFunc {
 		}
 		tasks, err := opts.ListCleanupTasks(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "cleanup_query_failed", err.Error())
+			writeInternalErr(w, r, "cleanup_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -155,6 +158,9 @@ func cleanupTasksHandler(opts Options) http.HandlerFunc {
 // 立即跑一次清理任务（不等 cron）。
 func runCleanupHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(opts, w, r) {
+			return
+		}
 		if opts.RunCleanupTask == nil {
 			writeError(w, http.StatusServiceUnavailable, "cleanup_unavailable", "cleanup not configured")
 			return
@@ -167,7 +173,7 @@ func runCleanupHandler(opts Options) http.HandlerFunc {
 		}
 		report, err := opts.RunCleanupTask(r.Context(), id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "cleanup_run_failed", err.Error())
+			writeInternalErr(w, r, "cleanup_run_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, report)
@@ -196,7 +202,7 @@ func accessLogsHandler(opts Options) http.HandlerFunc {
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
 		logs, total, err := opts.GetAccessLogs(r.Context(), page, pageSize)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "logs_query_failed", err.Error())
+			writeInternalErr(w, r, "logs_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -217,7 +223,7 @@ func dashboardSummaryHandler(opts Options) http.HandlerFunc {
 		}
 		s, err := opts.GetDashboardSummary(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "dashboard_query_failed", err.Error())
+			writeInternalErr(w, r, "dashboard_query_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, s)

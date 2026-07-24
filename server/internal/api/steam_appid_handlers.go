@@ -49,7 +49,7 @@ func steamAppIDListHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := opts.ListSteamAppIDs(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "steam_appids_list_failed", err.Error())
+			writeInternalErr(w, r, "steam_appids_list_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, SteamAppIDResponse{Items: items, Total: len(items)})
@@ -87,7 +87,7 @@ func steamAppIDCreateHandler(opts Options) http.HandlerFunc {
 			AppID: req.AppID, Name: req.Name, LoginType: req.LoginType, InstallDir: req.InstallDir, Enabled: enabled,
 		})
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "steam_appid_create_failed", err.Error())
+			writeInternalErr(w, r, "steam_appid_create_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, a)
@@ -120,7 +120,7 @@ func steamAppIDPatchHandler(opts Options) http.HandlerFunc {
 		}
 		a, err := opts.UpdateSteamAppID(r.Context(), id, patch)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "steam_appid_update_failed", err.Error())
+			writeInternalErr(w, r, "steam_appid_update_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, a)
@@ -139,7 +139,7 @@ func steamAppIDDeleteHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		if err := opts.DeleteSteamAppID(r.Context(), id); err != nil {
-			writeError(w, http.StatusInternalServerError, "steam_appid_delete_failed", err.Error())
+			writeInternalErr(w, r, "steam_appid_delete_failed", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
