@@ -101,10 +101,18 @@ export interface Registry {
   mirrorPath: string
   enabled: boolean
   createdAt: number
+  username?: string
+  hasPassword?: boolean
+  hasToken?: boolean
 }
 
 export interface RegistryPatch {
-  enabled: boolean
+  enabled?: boolean
+  username?: string
+  password?: string
+  token?: string
+  clearPassword?: boolean
+  clearToken?: boolean
 }
 
 export interface CacheEntry {

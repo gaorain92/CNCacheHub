@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 	"github.com/cncachehub/server/internal/api"
 	"github.com/cncachehub/server/internal/cache"
 	"github.com/cncachehub/server/internal/config"
+	"github.com/cncachehub/server/internal/crypto"
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	"github.com/cncachehub/server/internal/diagnostics"
 	logpkg "github.com/cncachehub/server/internal/log"
@@ -104,6 +106,15 @@ func run() error {
 	if err := syncEnvToSettings(rootCtx, db, &cfg); err != nil {
 		return fmt.Errorf("sync env to settings: %w", err)
 	}
+
+	// 3b2. 加载 / 生成 master key（§9.7.3 上游凭据加密）。
+	// 优先用 CNCH_MASTER_KEY env 64 字符 hex；否则用 data_dir/.master_key (auto-generate 0600)。
+	masterKey, err := crypto.LoadOrCreateMasterKey(cfg.DataDir, os.Getenv("CNCH_MASTER_KEY"))
+	if err != nil {
+		return fmt.Errorf("load master key: %w", err)
+	}
+	cipher := &masterKeyCipher{key: masterKey}
+	logpkg.Info("credential cipher ready", "key_source", cipherKeySource(cfg.DataDir))
 
 	// 3c. 初始化 access control Resolver（PRD §9.7.2 P2#4）。
 	// 从 DB 读最新 4 个 key；admin PUT 改值后通过 set() 重新读。
@@ -229,8 +240,10 @@ func run() error {
 		GetSettings:         makeGetSettingsAdapter(db),
 		UpdateSettings:      makeUpdateSettingsAdapter(db, fs),
 		DryRunCleanup:       makeDryRunCleanupAdapter(db),
-		ListRegistries:      makeListRegistriesAdapter(db),
-		SetRegistryEnabled: makeSetRegistryEnabledAdapter(db),
+		ListRegistries:         makeListRegistriesAdapter(db),
+		SetRegistryEnabled:     makeSetRegistryEnabledAdapter(db),
+		SetRegistryCredentials: db.SetUpstreamCredentials,
+		CredentialCipher:       cipher,
 		AuthDB:              db, // *storage.DB 满足 api.AuthDB 接口
 		// SteamCMD DNS 启动器（PRD §9.3）— 构造 server 实例
 		GetDNSConfig:       makeGetDNSConfigAdapter(db),
@@ -677,6 +690,31 @@ func loadAccessConfig(ctx context.Context, db *storage.DB) access.Config {
 	}
 }
 
+// masterKeyCipher 实现 api.Cipher 接口（用 internal/crypto 的 AES-256-GCM）。
+type masterKeyCipher struct {
+	key []byte
+}
+
+func (c *masterKeyCipher) Encrypt(plaintext []byte) ([]byte, error) {
+	return crypto.Encrypt(c.key, plaintext)
+}
+
+func (c *masterKeyCipher) Decrypt(ciphertext []byte) ([]byte, error) {
+	return crypto.Decrypt(c.key, ciphertext)
+}
+
+// cipherKeySource 返回 master key 来自哪（用于启动日志）。
+func cipherKeySource(dataDir string) string {
+	if os.Getenv("CNCH_MASTER_KEY") != "" {
+		return "env:CNCH_MASTER_KEY"
+	}
+	path := filepath.Join(dataDir, crypto.MasterKeyFilename)
+	if _, err := os.Stat(path); err == nil {
+		return "file:" + path
+	}
+	return "(generated on first write)"
+}
+
 func boolToStr(b bool) string {
 	if b {
 		return "true"
@@ -1056,25 +1094,11 @@ func makeUpstreamsAdapter(db *storage.DB) func(ctx context.Context) ([]api.Upstr
 	}
 }
 
-// makeListRegistriesAdapter 列出所有 registry（含 disabled）+ CreatedAt。
-func makeListRegistriesAdapter(db *storage.DB) func(ctx context.Context) ([]api.Registry, error) {
-	return func(ctx context.Context) ([]api.Registry, error) {
-		rows, err := db.ListAllUpstreams(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]api.Registry, 0, len(rows))
-		for _, r := range rows {
-			out = append(out, api.Registry{
-				ID:          r.ID,
-				Name:        r.Name,
-				UpstreamURL: r.UpstreamURL,
-				MirrorPath:  r.MirrorPath,
-				Enabled:     r.Enabled,
-				CreatedAt:   r.CreatedAt,
-			})
-		}
-		return out, nil
+// makeListRegistriesAdapter 列出所有 registry（含 disabled）+ 凭据状态标志。
+// 直接返回 storage.Registry（已含 Username/HasPassword/HasToken，§9.7.3）。
+func makeListRegistriesAdapter(db *storage.DB) func(ctx context.Context) ([]storage.Registry, error) {
+	return func(ctx context.Context) ([]storage.Registry, error) {
+		return db.ListAllUpstreams(ctx)
 	}
 }
 

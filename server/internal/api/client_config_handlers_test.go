@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/cncachehub/server/internal/storage"
 )
 
 func clientConfigTestHandler(t *testing.T) (http.Handler, *fakeAuthDB) {
@@ -19,8 +21,8 @@ func clientConfigTestHandler(t *testing.T) (http.Handler, *fakeAuthDB) {
 	_, _ = fdb.CreateUser(context.Background(), "admin", "admin1234", true)
 	return NewRouter(Options{
 		AuthDB: fdb.DB,
-		ListRegistries: func(ctx context.Context) ([]Registry, error) {
-			return []Registry{
+		ListRegistries: func(ctx context.Context) ([]storage.Registry, error) {
+			return []storage.Registry{
 				{ID: 1, Name: "dockerhub", UpstreamURL: "https://registry-1.docker.io", MirrorPath: "", Enabled: true},
 				{ID: 2, Name: "ghcr", UpstreamURL: "https://ghcr.io", MirrorPath: "/v2/ghcr", Enabled: true},
 				{ID: 3, Name: "quay", UpstreamURL: "https://quay.io", MirrorPath: "/v2/quay", Enabled: true},

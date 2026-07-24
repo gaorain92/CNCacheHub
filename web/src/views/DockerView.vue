@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { Box, Connection, Link } from '@element-plus/icons-vue'
+import { onMounted, ref } from 'vue'
+import { Box, Connection, Key, Link } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import DaemonJsonBlock from '@/components/DaemonJsonBlock.vue'
+import RegistryEditDialog from '@/components/RegistryEditDialog.vue'
 import { useDockerStore } from '@/stores/docker'
 import { useRegistriesStore } from '@/stores/registries'
 import { useAuthStore } from '@/stores/auth'
+import type { Registry } from '@/types/api'
 
 const docker = useDockerStore()
 const registries = useRegistriesStore()
 const auth = useAuthStore()
+
+const editing = ref<Registry | null>(null)
+const editDialogOpen = ref(false)
+
+function openEditDialog(reg: Registry): void {
+  editing.value = reg
+  editDialogOpen.value = true
+}
 
 onMounted(async () => {
   if (registries.items.length === 0) await registries.fetch()
@@ -66,10 +76,22 @@ function mirrorPathLabel(m: string): string {
           class="flex items-center justify-between rounded-2xl bg-white/[.04] px-4 py-3"
         >
           <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <span class="text-sm font-semibold text-slate-100">{{ r.name }}</span>
               <el-tag size="small" :type="r.enabled ? 'success' : 'info'" effect="dark">
                 {{ r.enabled ? 'enabled' : 'disabled' }}
+              </el-tag>
+              <el-tag v-if="r.username" size="small" type="warning" effect="dark">
+                <el-icon :size="10" class="mr-0.5"><User /></el-icon>
+                {{ r.username }}
+              </el-tag>
+              <el-tag v-if="r.hasPassword" size="small" type="primary" effect="dark">
+                <el-icon :size="10" class="mr-0.5"><Key /></el-icon>
+                密码已设
+              </el-tag>
+              <el-tag v-if="r.hasToken" size="small" type="primary" effect="dark">
+                <el-icon :size="10" class="mr-0.5"><Key /></el-icon>
+                Token 已设
               </el-tag>
             </div>
             <div class="text-xs text-slate-500 font-mono mt-1 truncate">
@@ -79,14 +101,25 @@ function mirrorPathLabel(m: string): string {
               客户端访问：<code class="text-mint">{{ mirrorPathLabel(r.mirrorPath) }}/&lt;repo&gt;/manifests/&lt;ref&gt;</code>
             </div>
           </div>
-          <el-switch
-            :model-value="r.enabled"
-            :disabled="!auth.isAdmin"
-            inline-prompt
-            active-text="ON"
-            inactive-text="OFF"
-            @change="() => toggleEnabled(r.name, r.enabled)"
-          />
+          <div class="flex items-center gap-2">
+            <el-button
+              v-if="auth.isAdmin"
+              size="small"
+              plain
+              :icon="Key"
+              @click="openEditDialog(r)"
+            >
+              凭据
+            </el-button>
+            <el-switch
+              :model-value="r.enabled"
+              :disabled="!auth.isAdmin"
+              inline-prompt
+              active-text="ON"
+              inactive-text="OFF"
+              @change="() => toggleEnabled(r.name, r.enabled)"
+            />
+          </div>
         </div>
       </div>
       <div v-else-if="registries.loading" class="text-sm text-slate-500 py-4 text-center">加载中…</div>
@@ -101,6 +134,9 @@ function mirrorPathLabel(m: string): string {
 
     <!-- daemon.json 配置生成 -->
     <DaemonJsonBlock />
+
+    <!-- 编辑上游凭据对话框 -->
+    <RegistryEditDialog v-model="editDialogOpen" :registry="editing" />
 
     <!-- 接入提示 -->
     <div class="rounded-3xl border border-white/[.08] bg-black/20 p-6">

@@ -198,7 +198,7 @@ func generateClientConfigHandler(opts Options) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "registries_query_failed", err.Error())
 			return
 		}
-		var reg *Registry
+		var reg *storage.Registry
 		for i := range regs {
 			if regs[i].Name == registryName {
 				reg = &regs[i]
@@ -690,7 +690,7 @@ func generateClientConfigBundleHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		base := clientBaseURL(r)
-		files := buildClientConfigBundle(base, registryListToStorage(regs))
+		files := buildClientConfigBundle(base, regs)
 
 		// 写 zip header
 		filename := fmt.Sprintf("cncachehub-client-config-%s.zip", time.Now().UTC().Format("20060102-150405"))
@@ -721,22 +721,6 @@ func generateClientConfigBundleHandler(opts Options) http.HandlerFunc {
 }
 
 // === helpers ===
-
-// registryListToStorage 把 api.Registry 列表转成 storage.Registry 列表（生成 bundle 用）。
-func registryListToStorage(regs []Registry) []storage.Registry {
-	out := make([]storage.Registry, 0, len(regs))
-	for _, r := range regs {
-		out = append(out, storage.Registry{
-			ID:          r.ID,
-			Name:        r.Name,
-			UpstreamURL: r.UpstreamURL,
-			MirrorPath:  r.MirrorPath,
-			Enabled:     r.Enabled,
-			CreatedAt:   r.CreatedAt,
-		})
-	}
-	return out
-}
 
 func dedupStrings(in []string) []string {
 	seen := make(map[string]struct{}, len(in))

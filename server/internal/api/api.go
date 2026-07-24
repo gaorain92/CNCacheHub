@@ -44,6 +44,14 @@ type BuildInfo struct {
 	Commit  string // 提交 SHA（默认 "local"）
 }
 
+// Cipher 是凭据加密接口（§9.7.3）。main.go 注入 internal/crypto 的实现。
+//
+// 接口而不是直接 import crypto 包：避免 api 跟 main 之间的循环依赖（main 同时 import api 和 crypto）。
+type Cipher interface {
+	Encrypt(plaintext []byte) ([]byte, error)
+	Decrypt(ciphertext []byte) ([]byte, error)
+}
+
 // AccessLogRecord 是 /v2/* 访问日志的简版（与 storage.AccessLogRecord 同形但解耦）。
 //
 // api 包不直接 import storage（避免循环），所以这里独立定义 record 类型。
@@ -101,10 +109,14 @@ type Options struct {
 	UpdateSettings func(ctx context.Context, patch SettingsPatch, userID int64) (SystemSettings, error)
 	// DryRunCleanup 跑一次清理预估（不实际删除）。
 	DryRunCleanup func(ctx context.Context, taskID int64) (CleanupReport, error)
-	// ListRegistries 列出所有 registry upstreams。
-	ListRegistries func(ctx context.Context) ([]Registry, error)
+	// ListRegistries 列出所有 registry upstreams（含凭据状态标志，§9.7.3）。
+	ListRegistries func(ctx context.Context) ([]storage.Registry, error)
 	// SetRegistryEnabled 启停 registry upstream。
 	SetRegistryEnabled func(ctx context.Context, name string, enabled bool) error
+	// SetRegistryCredentials 写上游凭据（§9.7.3）。
+	SetRegistryCredentials func(ctx context.Context, name string, patch storage.RegistryCredentialsPatch) error
+	// CredentialCipher 提供 AES-256-GCM 加解密（master key 从 main.go 注入）。
+	CredentialCipher Cipher
 	// AuthDB 鉴权后端（PRD §9.7.1）。nil 时不要求登录（开发模式）。
 	AuthDB AuthDB
 	// SessionUserRole 返回当前 session 用户的角色（"admin"/"user"/""）。nil = 未登录。
@@ -261,19 +273,17 @@ type SettingsPatch struct {
 	CleanupTargetPct  *int  `json:"cleanupTargetPct,omitempty"`
 }
 
-// Registry 是 /api/registries 列表项（PRD §9.2.2）。
-type Registry struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	UpstreamURL string `json:"upstreamUrl"`
-	MirrorPath  string `json:"mirrorPath"`
-	Enabled     bool   `json:"enabled"`
-	CreatedAt   int64  `json:"createdAt"`
-}
-
 // RegistryPatch 是 PATCH /api/registries/:name 入参。
+//
+// §9.7.3 扩展：除了 enabled 还可以传 username / password / token 凭据。
+// password / token 在 handler 内加密后存；空字符串不更新；显式 clearPassword/clearToken 清空。
 type RegistryPatch struct {
-	Enabled *bool `json:"enabled,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	Username      *string `json:"username,omitempty"`
+	Password      *string `json:"password,omitempty"` // 明文，handler 加密
+	Token         *string `json:"token,omitempty"`    // 明文，handler 加密
+	ClearPassword bool    `json:"clearPassword,omitempty"`
+	ClearToken    bool    `json:"clearToken,omitempty"`
 }
 
 // NewRouter 构造配置好的 chi 路由。
