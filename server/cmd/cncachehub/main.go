@@ -132,12 +132,15 @@ func run() error {
 
 	// 3d. 公开 Base URL 解析器（client config 生成器用）。
 	// 启动时从 DB 读一次；admin 通过 PATCH /api/settings 改值后 reload。
-	publicBaseURLGet := loadPublicBaseURL(rootCtx, db)
+	// 用一个 closure 让 api 每次取最新值（Options 里的 func 字段）。
+	var publicBaseURLVal string
+	publicBaseURLVal = loadPublicBaseURL(rootCtx, db)
 	publicBaseURLReload := func() {
-		publicBaseURLGet = loadPublicBaseURL(rootCtx, db)
+		publicBaseURLVal = loadPublicBaseURL(rootCtx, db)
 	}
-	if publicBaseURLGet != "" {
-		logpkg.Info("public base url", "url", publicBaseURLGet)
+	publicBaseURLGet := func() string { return publicBaseURLVal }
+	if publicBaseURLVal != "" {
+		logpkg.Info("public base url", "url", publicBaseURLVal)
 	}
 
 	// 4. 初始化 cache + 上游 + proxy。

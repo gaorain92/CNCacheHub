@@ -179,9 +179,9 @@ type Options struct {
 	// nil 时不限制。
 	APIRateLimiter *ratelimit.Limiter
 	// PublicBaseURL 客户端可访问的 CNCH 公开地址（admin 在 SettingsView 配）。
-	// 用于生成 client config（daemon.json / hosts.toml / k3s / verify.sh 等）。
-	// 空字符串 = fallback 到 r.Host。
-	PublicBaseURL string
+	// 每次调用读最新值（main.go 注入的 closure 实现 hot-reload）。
+	// 返回空字符串 = fallback 到 r.Host。
+	PublicBaseURL func() string
 }
 
 

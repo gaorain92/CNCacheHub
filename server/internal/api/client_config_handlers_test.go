@@ -390,7 +390,7 @@ func TestClientConfigBundle_UsesPublicBaseURL(t *testing.T) {
 			}, nil
 		},
 		GetSettings: func(ctx context.Context) (SystemSettings, error) { return SystemSettings{}, nil },
-		PublicBaseURL: publicURL,
+		PublicBaseURL: func() string { return publicURL },
 	})
 
 	// 直接打 /api/client-config/bundle（公开端点）
@@ -441,7 +441,7 @@ func TestDaemonJSON_UsesPublicBaseURL(t *testing.T) {
 				{ID: 1, Name: "dockerhub", UpstreamURL: "https://registry-1.docker.io", MirrorPath: "/v2", Enabled: true},
 			}, nil
 		},
-		PublicBaseURL: publicURL,
+		PublicBaseURL: func() string { return publicURL },
 	})
 
 	req := httptest.NewRequest("GET", "/api/docker/daemon.json", nil)

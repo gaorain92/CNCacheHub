@@ -29,14 +29,16 @@ var timeNowUnix = func() int64 { return time.Now().Unix() }
 
 // clientBaseURL 推断客户端访问 CNCacheHub 的 base URL。
 //
-// 优先级：opts.PublicBaseURL（admin 在 SettingsView 配的）> r.Host 推断。
+// 优先级：opts.PublicBaseURL()（admin 在 SettingsView 配的）> r.Host 推断。
 //
 // 为什么不直接用 r.Host：nginx 默认 proxy_set_header Host $proxy_host
 // 让后端 r.Host 永远是 127.0.0.1:8082 而不是用户访问的公网 IP。
 // 所以让 admin 显式配一次最稳；如果没配，fallback 到 r.Host（直连 8082 场景）。
 func clientBaseURL(opts Options, r *http.Request) string {
-	if opts.PublicBaseURL != "" {
-		return opts.PublicBaseURL
+	if opts.PublicBaseURL != nil {
+		if v := opts.PublicBaseURL(); v != "" {
+			return v
+		}
 	}
 	scheme := "http"
 	host := r.Host
