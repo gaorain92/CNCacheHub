@@ -46,6 +46,7 @@ import (
 	"github.com/cncachehub/server/internal/metrics"
 	"github.com/cncachehub/server/internal/preheat"
 	"github.com/cncachehub/server/internal/proxy"
+	"github.com/cncachehub/server/internal/ratelimit"
 	"github.com/cncachehub/server/internal/storage"
 )
 
@@ -215,6 +216,16 @@ func run() error {
 		logpkg.Info("admin users present", "count", n)
 	}
 
+	// 5g. Rate limiters（PRD §15.3 安全）。
+	// login: 每 IP 突发 5 次，之后每 10 秒放 1 个（防暴力破解）
+	loginLimiter := ratelimit.NewLimiter(5, 0.1, 10*time.Minute)
+	// 通用 API: 每 IP 突发 30 次，之后每秒放 5 个（防 DoS）
+	apiLimiter := ratelimit.NewLimiter(30, 5, 10*time.Minute)
+	logpkg.Info("rate limiters ready",
+		"login_capacity", 5, "login_refill_per_sec", 0.1,
+		"api_capacity", 30, "api_refill_per_sec", 5,
+	)
+
 	// 6. 构造 HTTP server。
 	build := api.BuildInfo{
 		Name:    "cncachehub",
@@ -299,6 +310,9 @@ func run() error {
 		// 代理访问控制（P2#4 / PRD §9.7.2）— Resolver + 热重载回调
 		AccessControlResolve: accessGet,
 		AccessControlReload:  accessReload,
+		// Rate limiters（PRD §15.3）
+		LoginRateLimiter: loginLimiter,
+		APIRateLimiter:   apiLimiter,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{

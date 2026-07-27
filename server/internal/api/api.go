@@ -28,6 +28,7 @@ import (
 	dnsserver "github.com/cncachehub/server/internal/dns"
 	"github.com/cncachehub/server/internal/diagnostics"
 	"github.com/cncachehub/server/internal/metrics"
+	"github.com/cncachehub/server/internal/ratelimit"
 	"github.com/cncachehub/server/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -171,6 +172,12 @@ type Options struct {
 	AccessControlResolve access.Resolver
 	// AccessControlReload 重新从 DB 读最新配置（写 DB 后由 PUT handler 调）。
 	AccessControlReload func()
+	// LoginRateLimiter 限制登录端点的请求频率（防暴力破解，PRD §15.3）。
+	// nil 时不限制。
+	LoginRateLimiter *ratelimit.Limiter
+	// APIRateLimiter 限制通用 API 写操作的请求频率（防 DoS）。
+	// nil 时不限制。
+	APIRateLimiter *ratelimit.Limiter
 }
 
 
@@ -301,6 +308,10 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(loggerMiddleware())
 	r.Use(chimw.Recoverer)
 	r.Use(jsonContentTypeMiddleware())
+	// 通用 API 限流（防 DoS，PRD §15.3）。
+	if opts.APIRateLimiter != nil {
+		r.Use(rateLimitMiddleware(opts.APIRateLimiter, nil))
+	}
 	// 鉴权放在最后（在 logger 后），这样 401 也会被 logger 记录。
 	r.Use(requireAuth(opts))
 
@@ -313,7 +324,12 @@ func NewRouter(opts Options) http.Handler {
 		r.Route("/auth", func(r chi.Router) {
 			r.Get("/init-status", initStatusHandler(opts))
 			r.Post("/init", initHandler(opts))
-			r.Post("/login", loginHandler(opts))
+			// 登录端点独立限流（防暴力破解，比通用 API 更严格）。
+			if opts.LoginRateLimiter != nil {
+				r.With(rateLimitMiddleware(opts.LoginRateLimiter, nil)).Post("/login", loginHandler(opts))
+			} else {
+				r.Post("/login", loginHandler(opts))
+			}
 			r.Post("/logout", logoutHandler(opts))
 			r.Get("/me", meHandler(opts))
 			r.Post("/change-password", changePasswordHandler(opts))
@@ -492,6 +508,30 @@ func jsonContentTypeMiddleware() func(http.Handler) http.Handler {
 			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 			ww.Header().Set("Content-Type", "application/json; charset=utf-8")
 			next.ServeHTTP(ww, r)
+		})
+	}
+}
+
+// rateLimitMiddleware 按 IP 做 token-bucket 限流。
+//
+// limiter 不可为 nil（调用方负责判 nil 再挂）。
+// skipPath 可选：匹配的路径跳过限流（如健康检查）。nil 表示全限。
+// 被限流时返 429 + Retry-After 头。
+func rateLimitMiddleware(limiter *ratelimit.Limiter, skipPath func(path string) bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if skipPath != nil && skipPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			key := clientIP(r)
+			ok, retryAfter := limiter.Take(key)
+			if !ok {
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()+1))
+				writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests, try again later")
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
