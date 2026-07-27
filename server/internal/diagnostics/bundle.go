@@ -237,7 +237,7 @@ func WriteBundle(ctx context.Context, w io.Writer, src BundleSource) error {
 	}
 
 	// access_logs.csv（最近 1000 条）
-	if logs, _, err := src.DB.ListAccessLogs(ctx, 1, 1000); err == nil {
+	if logs, _, err := src.DB.ListAccessLogs(ctx, 1, 1000, storage.LogFilter{}); err == nil {
 		buf := []byte("id,created_at,method,path,status,duration_ms,cached,bypassed,bypass_reason,client_ip,bytes,error\n")
 		for _, l := range logs {
 			buf = append(buf,

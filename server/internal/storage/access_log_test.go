@@ -32,7 +32,7 @@ func TestInsertAndListAccessLog(t *testing.T) {
 		t.Fatalf("InsertAccessLog: %v", err)
 	}
 
-	logs, total, err := db.ListAccessLogs(ctx, 1, 10)
+	logs, total, err := db.ListAccessLogs(ctx, 1, 10, LogFilter{})
 	if err != nil {
 		t.Fatalf("ListAccessLogs: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestListAccessLogs_Pagination(t *testing.T) {
 		}
 	}
 
-	logs, total, err := db.ListAccessLogs(ctx, 1, 10)
+	logs, total, err := db.ListAccessLogs(ctx, 1, 10, LogFilter{})
 	if err != nil {
 		t.Fatalf("ListAccessLogs: %v", err)
 	}

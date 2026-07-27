@@ -58,6 +58,8 @@ type Cipher interface {
 // api 包不直接 import storage（避免循环），所以这里独立定义 record 类型。
 // main.go 注入 AccessLogWriter 时负责转换。
 type AccessLogRecord struct {
+	ID           int64  `json:"id"`
+	CreatedAt    int64  `json:"createdAt"` // unix 秒
 	Method       string `json:"method"`
 	Path         string `json:"path"`
 	Status       int    `json:"status"`
@@ -68,6 +70,19 @@ type AccessLogRecord struct {
 	ClientIP     string `json:"clientIp"`
 	Bytes        int64  `json:"bytes"`
 	Error        string `json:"error"`
+}
+
+// LogFilter 封装 GET /api/logs 查询参数（与 storage.LogFilter 同形但解耦）。
+type LogFilter struct {
+	Status    int    `json:"status,omitempty"`    // 精确状态码，0=不限
+	StatusCls int    `json:"statusCls,omitempty"` // 1-5 = 匹配 1xx-5xx，0=不限
+	Method    string `json:"method,omitempty"`
+	Path      string `json:"path,omitempty"`      // 子串搜索
+	Cached    *bool  `json:"cached,omitempty"`    // nil=不限
+	Bypassed  *bool  `json:"bypassed,omitempty"`  // nil=不限
+	ClientIP  string `json:"clientIp,omitempty"`
+	StartAt   int64  `json:"startAt,omitempty"`   // unix 秒
+	EndAt     int64  `json:"endAt,omitempty"`     // unix 秒
 }
 
 // AccessLogWriter 把访问日志异步落盘（由 main.go 注入，连接 storage.DB）。
@@ -92,8 +107,12 @@ type Options struct {
 	GetUpstreams func(ctx context.Context) ([]Upstream, error)
 	// GetDashboardSummary 聚合仪表盘数据。
 	GetDashboardSummary func(ctx context.Context) (DashboardSummary, error)
-	// GetAccessLogs 分页查询 request_logs。
-	GetAccessLogs func(ctx context.Context, page, pageSize int) ([]AccessLogRecord, int, error)
+	// GetAccessLogs 分页查询 request_logs（支持筛选）。
+	GetAccessLogs func(ctx context.Context, page, pageSize int, filter LogFilter) ([]AccessLogRecord, int, error)
+	// PurgeAccessLogs 删除指定时间之前的日志，返回删除行数。
+	PurgeAccessLogs func(ctx context.Context, before int64) (int64, error)
+	// CountAccessLogs 返回日志总行数。
+	CountAccessLogs func(ctx context.Context) (int, error)
 	// GetCacheEntries 分页查询 cache_entries。
 	GetCacheEntries func(ctx context.Context, page, pageSize int, query string) ([]CacheEntry, int, error)
 	// DeleteCacheEntry 按 id 删除（DB 行 + 调用方负责删 blob 文件）。
@@ -272,6 +291,7 @@ type SystemSettings struct {
 	CleanupTriggerPct int    `json:"cleanupTriggerPct"`
 	CleanupTargetPct  int    `json:"cleanupTargetPct"`
 	PublicBaseURL     string `json:"publicBaseUrl"`
+	LogRetentionDays  int    `json:"logRetentionDays"` // 0 = 不自动清理
 	UpdatedAt         int64  `json:"updatedAt"`
 }
 
@@ -284,6 +304,7 @@ type SettingsPatch struct {
 	CleanupTriggerPct *int    `json:"cleanupTriggerPct,omitempty"`
 	CleanupTargetPct  *int    `json:"cleanupTargetPct,omitempty"`
 	PublicBaseURL     *string `json:"publicBaseUrl,omitempty"`
+	LogRetentionDays  *int    `json:"logRetentionDays,omitempty"`
 }
 
 // RegistryPatch 是 PATCH /api/registries/:name 入参。
@@ -346,6 +367,8 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/cache/entries", cacheEntriesHandler(opts))
 		r.Delete("/cache/entries/{id}", cacheDeleteHandler(opts))
 		r.Get("/logs", accessLogsHandler(opts))
+		r.Delete("/logs", purgeLogsHandler(opts))
+		r.Get("/logs/stats", logStatsHandler(opts))
 		r.Get("/dashboard/summary", dashboardSummaryHandler(opts))
 		r.Get("/cleanup/tasks", cleanupTasksHandler(opts))
 		r.Post("/cleanup/tasks/{id}/run", runCleanupHandler(opts))

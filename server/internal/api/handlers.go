@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -185,16 +186,45 @@ func upstreamHealthHandler(opts Options) http.HandlerFunc {
 	}
 }
 
-// accessLogsHandler GET /api/logs?page=1&pageSize=50
+// accessLogsHandler GET /api/logs?page=1&pageSize=50&status=500&statusCls=5&method=GET&path=keyword&cached=true&bypassed=false&clientIp=1.2.3.4&startAt=...&endAt=...
 func accessLogsHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if opts.GetAccessLogs == nil {
 			writeError(w, http.StatusServiceUnavailable, "logs_unavailable", "access logs not configured")
 			return
 		}
-		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
-		logs, total, err := opts.GetAccessLogs(r.Context(), page, pageSize)
+		q := r.URL.Query()
+		page, _ := strconv.Atoi(q.Get("page"))
+		pageSize, _ := strconv.Atoi(q.Get("pageSize"))
+
+		// 筛选参数
+		filter := LogFilter{
+			Method:   q.Get("method"),
+			Path:     q.Get("path"),
+			ClientIP: q.Get("clientIp"),
+		}
+		if v := q.Get("status"); v != "" {
+			filter.Status, _ = strconv.Atoi(v)
+		}
+		if v := q.Get("statusCls"); v != "" {
+			filter.StatusCls, _ = strconv.Atoi(v)
+		}
+		if v := q.Get("cached"); v != "" {
+			b := v == "true"
+			filter.Cached = &b
+		}
+		if v := q.Get("bypassed"); v != "" {
+			b := v == "true"
+			filter.Bypassed = &b
+		}
+		if v := q.Get("startAt"); v != "" {
+			filter.StartAt, _ = strconv.ParseInt(v, 10, 64)
+		}
+		if v := q.Get("endAt"); v != "" {
+			filter.EndAt, _ = strconv.ParseInt(v, 10, 64)
+		}
+
+		logs, total, err := opts.GetAccessLogs(r.Context(), page, pageSize, filter)
 		if err != nil {
 			writeInternalErr(w, r, "logs_query_failed", err)
 			return
@@ -205,6 +235,56 @@ func accessLogsHandler(opts Options) http.HandlerFunc {
 			"page":     page,
 			"pageSize": pageSize,
 		})
+	}
+}
+
+// purgeLogsHandler DELETE /api/logs?before=<unix_ts> 或 DELETE /api/logs/purge?days=30
+func purgeLogsHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.PurgeAccessLogs == nil {
+			writeError(w, http.StatusServiceUnavailable, "logs_unavailable", "access logs not configured")
+			return
+		}
+
+		var before int64
+		if v := r.URL.Query().Get("before"); v != "" {
+			before, _ = strconv.ParseInt(v, 10, 64)
+		} else if v := r.URL.Query().Get("days"); v != "" {
+			days, _ := strconv.Atoi(v)
+			if days <= 0 {
+				days = 30
+			}
+			before = time.Now().AddDate(0, 0, -days).Unix()
+		} else {
+			// 默认清除 30 天前
+			before = time.Now().AddDate(0, 0, -30).Unix()
+		}
+
+		deleted, err := opts.PurgeAccessLogs(r.Context(), before)
+		if err != nil {
+			writeInternalErr(w, r, "logs_purge_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"deleted": deleted,
+			"before":  before,
+		})
+	}
+}
+
+// logStatsHandler GET /api/logs/stats — 返回日志总行数。
+func logStatsHandler(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if opts.CountAccessLogs == nil {
+			writeError(w, http.StatusServiceUnavailable, "logs_unavailable", "access logs not configured")
+			return
+		}
+		count, err := opts.CountAccessLogs(r.Context())
+		if err != nil {
+			writeInternalErr(w, r, "logs_count_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"total": count})
 	}
 }
 

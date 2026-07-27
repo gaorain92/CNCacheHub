@@ -70,6 +70,10 @@ func settingsPatchHandler(opts Options) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid_value", "cleanupTargetPct must be < cleanupTriggerPct")
 			return
 		}
+		if patch.LogRetentionDays != nil && (*patch.LogRetentionDays < 0 || *patch.LogRetentionDays > 365) {
+			writeError(w, http.StatusBadRequest, "invalid_value", "logRetentionDays must be in [0, 365] (0 = disabled)")
+			return
+		}
 		updated, err := opts.UpdateSettings(r.Context(), patch, u.ID)
 		if err != nil {
 			writeInternalErr(w, r, "settings_update_failed", err)

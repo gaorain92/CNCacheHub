@@ -76,8 +76,21 @@ func (d *DB) InsertAccessLog(ctx context.Context, rec AccessLogRecord) error {
 	return nil
 }
 
-// ListAccessLogs 分页查询 request_logs（按时间倒序）。
-func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int) ([]AccessLogRecord, int, error) {
+// LogFilter 封装 GET /api/logs 的筛选条件。
+type LogFilter struct {
+	Status    int    // 0 = 不限；否则精确匹配（如 500）或 5xx 模式（StatusClass=5 → status >= 500 AND status < 600）
+	StatusCls int    // 1-5 = 匹配 1xx-5xx；0 = 不限
+	Method    string // 空 = 不限
+	Path      string // 子串 LIKE %path%
+	Cached    *bool  // nil = 不限；true = HIT；false = MISS
+	Bypassed  *bool  // nil = 不限；true = 旁路
+	ClientIP  string // 精确匹配
+	StartAt   int64  // unix 秒，0 = 不限
+	EndAt     int64  // unix 秒，0 = 不限
+}
+
+// ListAccessLogs 分页查询 request_logs（按时间倒序，支持筛选）。
+func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int, filter LogFilter) ([]AccessLogRecord, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -86,18 +99,19 @@ func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int) ([]AccessLo
 	}
 	offset := (page - 1) * pageSize
 
+	// 构建 WHERE 子句
+	where, args := buildLogWhere(filter)
+
 	// 总数
 	var total int
-	if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM request_logs`).Scan(&total); err != nil {
+	countSQL := "SELECT COUNT(*) FROM request_logs" + where
+	if err := d.SQLDB.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("storage: count logs: %w", err)
 	}
 
-	rows, err := d.SQLDB.QueryContext(ctx, `
-		SELECT id, created_at, method, path, status, duration_ms, cached, bypassed, bypass_reason, client_ip, bytes, error
-		FROM request_logs
-		ORDER BY id DESC
-		LIMIT ? OFFSET ?
-	`, pageSize, offset)
+	querySQL := `SELECT id, created_at, method, path, status, duration_ms, cached, bypassed, bypass_reason, client_ip, bytes, error
+		FROM request_logs` + where + ` ORDER BY id DESC LIMIT ? OFFSET ?`
+	rows, err := d.SQLDB.QueryContext(ctx, querySQL, append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("storage: query logs: %w", err)
 	}
@@ -123,6 +137,91 @@ func (d *DB) ListAccessLogs(ctx context.Context, page, pageSize int) ([]AccessLo
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// buildLogWhere 根据 filter 生成 WHERE 子句 + 参数。
+func buildLogWhere(f LogFilter) (string, []any) {
+	var clauses []string
+	var args []any
+
+	if f.StatusCls >= 1 && f.StatusCls <= 5 {
+		lo := f.StatusCls * 100
+		hi := lo + 100
+		clauses = append(clauses, "status >= ? AND status < ?")
+		args = append(args, lo, hi)
+	} else if f.Status > 0 {
+		clauses = append(clauses, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.Method != "" {
+		clauses = append(clauses, "method = ?")
+		args = append(args, f.Method)
+	}
+	if f.Path != "" {
+		clauses = append(clauses, "path LIKE ?")
+		args = append(args, "%"+f.Path+"%")
+	}
+	if f.Cached != nil {
+		if *f.Cached {
+			clauses = append(clauses, "cached = 1")
+		} else {
+			clauses = append(clauses, "cached = 0")
+		}
+	}
+	if f.Bypassed != nil {
+		if *f.Bypassed {
+			clauses = append(clauses, "bypassed = 1")
+		} else {
+			clauses = append(clauses, "bypassed = 0")
+		}
+	}
+	if f.ClientIP != "" {
+		clauses = append(clauses, "client_ip = ?")
+		args = append(args, f.ClientIP)
+	}
+	if f.StartAt > 0 {
+		clauses = append(clauses, "created_at >= ?")
+		args = append(args, f.StartAt)
+	}
+	if f.EndAt > 0 {
+		clauses = append(clauses, "created_at <= ?")
+		args = append(args, f.EndAt)
+	}
+
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " WHERE " + joinClauses(clauses, " AND "), args
+}
+
+func joinClauses(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	s := parts[0]
+	for _, p := range parts[1:] {
+		s += sep + p
+	}
+	return s
+}
+
+// PurgeAccessLogs 删除 created_at < before 的日志，返回删除行数。
+func (d *DB) PurgeAccessLogs(ctx context.Context, before int64) (int64, error) {
+	res, err := d.SQLDB.ExecContext(ctx, `DELETE FROM request_logs WHERE created_at < ?`, before)
+	if err != nil {
+		return 0, fmt.Errorf("storage: purge logs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// CountAccessLogs 返回 request_logs 总行数。
+func (d *DB) CountAccessLogs(ctx context.Context) (int, error) {
+	var n int
+	if err := d.SQLDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM request_logs`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("storage: count logs: %w", err)
+	}
+	return n, nil
 }
 
 // DashboardSummary 返回仪表盘聚合数据。

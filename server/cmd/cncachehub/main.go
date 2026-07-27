@@ -195,6 +195,9 @@ func run() error {
 	// 5d. 启 session cleanup goroutine（每小时清过期 session）。
 	go runSessionCleanup(rootCtx, db)
 
+	// 5d2. 启 log retention cleanup goroutine（每 6 小时清过期访问日志）。
+	go runLogRetentionCleanup(rootCtx, db)
+
 	// 5e. 启 SteamCMD DNS 启动器（PRD §9.3）。从 DB 读配置；cfg 默认关。
 	dnsSrv := dnsserver.NewServer(dnsserver.Config{
 		Enabled:     false,
@@ -256,6 +259,8 @@ func run() error {
 		GetUpstreams:        makeUpstreamsAdapter(db),
 		GetDashboardSummary: makeDashboardAdapter(db),
 		GetAccessLogs:       makeListAccessLogsAdapter(db),
+		PurgeAccessLogs:     makePurgeAccessLogsAdapter(db),
+		CountAccessLogs:     makeCountAccessLogsAdapter(db),
 		GetCacheEntries:     makeListCacheEntriesAdapter(db, fs),
 		DeleteCacheEntry:    makeDeleteCacheEntryAdapter(db, fs),
 		ListCleanupTasks:    makeListCleanupTasksAdapter(db),
@@ -544,6 +549,8 @@ func makeGetSettingsAdapter(db *storage.DB) func(ctx context.Context) (api.Syste
 				out.CleanupTargetPct = atoiSafe(s.Value, 60)
 			case storage.SettingPublicBaseURL:
 				out.PublicBaseURL = s.Value
+			case storage.SettingLogRetentionDays:
+				out.LogRetentionDays = atoiSafe(s.Value, 30)
 			}
 			if s.UpdatedAt > latest {
 				latest = s.UpdatedAt
@@ -584,6 +591,9 @@ func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore, onUpdate fun
 		}
 		if patch.PublicBaseURL != nil {
 			kvs[storage.SettingPublicBaseURL] = strings.TrimRight(*patch.PublicBaseURL, "/")
+		}
+		if patch.LogRetentionDays != nil {
+			kvs[storage.SettingLogRetentionDays] = itoa(*patch.LogRetentionDays)
 		}
 		if err := db.SetMany(ctx, kvs, userID); err != nil {
 			return api.SystemSettings{}, err
@@ -810,6 +820,9 @@ func summarizePatch(p api.SettingsPatch) string {
 	}
 	if p.PublicBaseURL != nil {
 		parts = append(parts, "public_base_url="+*p.PublicBaseURL)
+	}
+	if p.LogRetentionDays != nil {
+		parts = append(parts, "log_retention_days="+itoa(*p.LogRetentionDays))
 	}
 	if len(parts) == 0 {
 		return "noop"
@@ -1050,6 +1063,38 @@ func runSessionCleanup(ctx context.Context, db *storage.DB) {
 	}
 }
 
+// runLogRetentionCleanup 定期清理过期访问日志（每 6 小时一次）。
+// 保留天数从 system_settings 读，0 = 不清理。
+func runLogRetentionCleanup(ctx context.Context, db *storage.DB) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	// 启动后 10 分钟跑第一次（不阻塞 startup）
+	initial := time.After(10 * time.Minute)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-initial:
+			initial = nil
+		case <-ticker.C:
+		}
+		daysStr := db.GetString(ctx, storage.SettingLogRetentionDays, "30")
+		days := atoiSafe(daysStr, 30)
+		if days <= 0 {
+			continue
+		}
+		before := time.Now().AddDate(0, 0, -days).Unix()
+		n, err := db.PurgeAccessLogs(ctx, before)
+		if err != nil {
+			logpkg.Warn("purge access logs", "err", err.Error())
+			continue
+		}
+		if n > 0 {
+			logpkg.Info("purged access logs", "count", n, "retention_days", days)
+		}
+	}
+}
+
 // startUpstreamHealthChecker 启 goroutine 每 60s 探一次上游 registry。
 func startUpstreamHealthChecker(ctx context.Context, upstreamURL string) *upstreamHealth {
 	h := &upstreamHealth{latest: UpstreamHealthSnapshot{URL: upstreamURL, Reachable: true}}
@@ -1230,16 +1275,29 @@ func makeDeleteCacheEntryAdapter(db *storage.DB, fs cache.Store) func(ctx contex
 	}
 }
 
-// makeListAccessLogsAdapter 返回闭包，把 storage.AccessLogRecord 转为 api.AccessLogRecord。
-func makeListAccessLogsAdapter(db *storage.DB) func(ctx context.Context, page, pageSize int) ([]api.AccessLogRecord, int, error) {
-	return func(ctx context.Context, page, pageSize int) ([]api.AccessLogRecord, int, error) {
-		rows, total, err := db.ListAccessLogs(ctx, page, pageSize)
+// makeListAccessLogsAdapter 返回闭包，把 storage.AccessLogRecord 转为 api.AccessLogRecord（含筛选）。
+func makeListAccessLogsAdapter(db *storage.DB) func(ctx context.Context, page, pageSize int, filter api.LogFilter) ([]api.AccessLogRecord, int, error) {
+	return func(ctx context.Context, page, pageSize int, f api.LogFilter) ([]api.AccessLogRecord, int, error) {
+		sf := storage.LogFilter{
+			Status:    f.Status,
+			StatusCls: f.StatusCls,
+			Method:    f.Method,
+			Path:      f.Path,
+			Cached:    f.Cached,
+			Bypassed:  f.Bypassed,
+			ClientIP:  f.ClientIP,
+			StartAt:   f.StartAt,
+			EndAt:     f.EndAt,
+		}
+		rows, total, err := db.ListAccessLogs(ctx, page, pageSize, sf)
 		if err != nil {
 			return nil, 0, err
 		}
 		out := make([]api.AccessLogRecord, 0, len(rows))
 		for _, r := range rows {
 			out = append(out, api.AccessLogRecord{
+				ID:           r.ID,
+				CreatedAt:    r.CreatedAt,
 				Method:       r.Method,
 				Path:         r.Path,
 				Status:       r.Status,
@@ -1253,6 +1311,20 @@ func makeListAccessLogsAdapter(db *storage.DB) func(ctx context.Context, page, p
 			})
 		}
 		return out, total, nil
+	}
+}
+
+// makePurgeAccessLogsAdapter 返回闭包，转发到 storage.PurgeAccessLogs。
+func makePurgeAccessLogsAdapter(db *storage.DB) func(ctx context.Context, before int64) (int64, error) {
+	return func(ctx context.Context, before int64) (int64, error) {
+		return db.PurgeAccessLogs(ctx, before)
+	}
+}
+
+// makeCountAccessLogsAdapter 返回闭包，转发到 storage.CountAccessLogs。
+func makeCountAccessLogsAdapter(db *storage.DB) func(ctx context.Context) (int, error) {
+	return func(ctx context.Context) (int, error) {
+		return db.CountAccessLogs(ctx)
 	}
 }
 

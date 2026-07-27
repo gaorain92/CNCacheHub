@@ -17,6 +17,7 @@ const cacheTotalGb = ref(20)
 const cleanupTriggerPct = ref(80)
 const cleanupTargetPct = ref(60)
 const publicBaseUrl = ref('')
+const logRetentionDays = ref(30)
 
 // 模板里要用 location（vue 模板没有 window 顶层）
 const currentLocation =
@@ -48,6 +49,7 @@ function syncFromStore(): void {
   cleanupTriggerPct.value = settings.data.cleanupTriggerPct
   cleanupTargetPct.value = settings.data.cleanupTargetPct
   publicBaseUrl.value = settings.data.publicBaseUrl || ''
+  logRetentionDays.value = settings.data.logRetentionDays ?? 30
 }
 
 function syncAccessFromStore(): void {
@@ -76,7 +78,8 @@ const dirty = computed(() => {
     cacheTotalGb.value !== settings.data.cacheTotalGb ||
     cleanupTriggerPct.value !== settings.data.cleanupTriggerPct ||
     cleanupTargetPct.value !== settings.data.cleanupTargetPct ||
-    (publicBaseUrl.value || '') !== (settings.data.publicBaseUrl || '')
+    (publicBaseUrl.value || '') !== (settings.data.publicBaseUrl || '') ||
+    logRetentionDays.value !== (settings.data.logRetentionDays ?? 30)
   )
 })
 
@@ -122,6 +125,7 @@ async function onSave(): Promise<void> {
     cleanupTriggerPct: cleanupTriggerPct.value,
     cleanupTargetPct: cleanupTargetPct.value,
     publicBaseUrl: publicBaseUrl.value,
+    logRetentionDays: logRetentionDays.value,
   })
   saving.value = false
   if (ok) {
@@ -346,6 +350,41 @@ function generateRandomToken(): void {
       </div>
       <div v-if="!validCleanupWater" class="rounded-xl bg-rose-500/5 border border-rose-500/20 p-3 text-xs text-rose-300">
         ⚠ 触发水位必须大于目标水位
+      </div>
+    </div>
+
+    <!-- 日志保留策略 -->
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 p-6 space-y-4">
+      <div class="flex items-center gap-2">
+        <el-icon :size="18" color="#94a3b8"><Brush /></el-icon>
+        <h3 class="text-base font-semibold">日志保留策略</h3>
+      </div>
+      <p class="text-sm text-slate-400 leading-relaxed">
+        访问日志自动清理。设为 0 表示不自动清理（需要手动在日志页面清理）。
+        系统每 6 小时检查一次。
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+          <label class="text-xs text-slate-400 mb-2 block">保留天数（0 = 不自动清理）</label>
+          <el-input-number
+            v-model="logRetentionDays"
+            :min="0"
+            :max="365"
+            :step="1"
+            controls-position="right"
+            class="w-full"
+          />
+        </div>
+        <div class="flex items-end">
+          <p class="text-xs text-slate-500 pb-1">
+            <template v-if="logRetentionDays > 0">
+              自动清理 {{ logRetentionDays }} 天前的日志。仍可在「访问日志」页面手动清理。
+            </template>
+            <template v-else>
+              已关闭自动清理。仅可在「访问日志」页面手动清理。
+            </template>
+          </p>
+        </div>
       </div>
     </div>
 

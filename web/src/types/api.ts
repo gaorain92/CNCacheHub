@@ -48,6 +48,8 @@ export interface DashboardSummary {
 }
 
 export interface AccessLogItem {
+  id: number
+  createdAt: number // unix 秒
   method: string
   path: string
   status: number
@@ -58,6 +60,19 @@ export interface AccessLogItem {
   clientIp: string
   bytes: number
   error: string
+}
+
+// 日志筛选条件
+export interface LogFilter {
+  status?: number
+  statusCls?: number // 1-5 = 1xx-5xx
+  method?: string
+  path?: string
+  cached?: boolean
+  bypassed?: boolean
+  clientIp?: string
+  startAt?: number
+  endAt?: number
 }
 
 export interface AccessLogsResponse {
@@ -79,6 +94,7 @@ export interface SystemSettings {
   cleanupTriggerPct: number
   cleanupTargetPct: number
   publicBaseUrl: string
+  logRetentionDays: number // 0 = 不自动清理
   updatedAt: number
 }
 
@@ -90,6 +106,7 @@ export interface SettingsPatch {
   cleanupTriggerPct?: number
   cleanupTargetPct?: number
   publicBaseUrl?: string
+  logRetentionDays?: number
 }
 
 // ============================================================================

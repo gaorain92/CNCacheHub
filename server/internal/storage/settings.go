@@ -35,6 +35,8 @@ const (
 	// 用于生成 client config（daemon.json / hosts.toml / k3s / verify.sh 等）。
 	// 留空时 fallback 到 r.Host（nginx 直连场景）。
 	SettingPublicBaseURL = "public_base_url"
+	// 日志保留天数（0 = 不自动清理，默认 30 天）。
+	SettingLogRetentionDays = "log_retention_days"
 )
 
 // GetSetting 按 key 查。
