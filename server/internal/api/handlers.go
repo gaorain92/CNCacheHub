@@ -3,7 +3,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -54,16 +53,11 @@ func daemonJSONHandler(opts Options) http.HandlerFunc {
 		}
 		// 选第一个
 		up := ups[0]
-		// 构造 mirror URL：从 request Host 推断（避免硬编码）
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
-			scheme = fwd
-		}
-		host := r.Host
-		mirrorURL := fmt.Sprintf("%s://%s%s", scheme, host, up.MirrorPath)
+		// 构造 mirror URL：优先用 PublicBaseURL（admin 在 SettingsView 配），
+		// fallback 到 request Host 推断（直连 8082 场景）。
+		base := clientBaseURL(opts, r)
+		mirrorURL := base + up.MirrorPath
+		host := stripScheme(base)
 
 		cfg := daemonConfig{
 			RegistryMirrors:    []string{mirrorURL},

@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -369,5 +370,96 @@ func TestClientConfigBundle_SteamCMDCompose_ContainsDNS(t *testing.T) {
 	}
 	if !strings.Contains(dc, "CNCH_BASE_URL") {
 		t.Errorf("steamcmd compose missing CNCH_BASE_URL env")
+	}
+}
+
+// TestClientConfigBundle_UsesPublicBaseURL 验证 admin 配的 PublicBaseURL 优先于 r.Host。
+//
+// 场景：nginx 默认 proxy_set_header Host $proxy_host 让 r.Host 永远是 127.0.0.1:8082。
+// 客户端从公网访问时，拿不到真 IP 写进配置。
+// 修法：admin 在 SettingsView 配 "公开 Base URL"，生成配置时优先用。
+func TestClientConfigBundle_UsesPublicBaseURL(t *testing.T) {
+	fdb := newFakeAuthDB(t)
+	_, _ = fdb.CreateUser(context.Background(), "admin", "admin1234", true)
+	publicURL := "http://117.55.237.250"
+	h := NewRouter(Options{
+		AuthDB: fdb.DB,
+		ListRegistries: func(ctx context.Context) ([]storage.Registry, error) {
+			return []storage.Registry{
+				{ID: 1, Name: "dockerhub", UpstreamURL: "https://registry-1.docker.io", MirrorPath: "/v2", Enabled: true},
+			}, nil
+		},
+		GetSettings: func(ctx context.Context) (SystemSettings, error) { return SystemSettings{}, nil },
+		PublicBaseURL: publicURL,
+	})
+
+	// 直接打 /api/client-config/bundle（公开端点）
+	req := httptest.NewRequest("POST", "/api/client-config/bundle", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	// 不传 Host header，模拟从公网访问：后端 r.Host 是 "example.com" 之类
+	req.Host = "example.com"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	zipBytes := rec.Body.Bytes()
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		t.Fatalf("zip read: %v", err)
+	}
+
+	// 抽取所有文本文件，验证不出现 127.0.0.1:8082 / r.Host (example.com)
+	want := publicURL
+	notWant := []string{"127.0.0.1:8082", "example.com"}
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		content, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		text := string(content)
+		for _, bad := range notWant {
+			if strings.Contains(text, bad) {
+				t.Errorf("file %s contains %q (should use PublicBaseURL %q):\n%s", f.Name, bad, want, text)
+			}
+		}
+		if !strings.Contains(text, want) {
+			t.Errorf("file %s missing PublicBaseURL %q", f.Name, want)
+		}
+	}
+}
+
+// TestDaemonJSON_UsesPublicBaseURL 验证 /api/docker/daemon.json 端点也用 PublicBaseURL。
+func TestDaemonJSON_UsesPublicBaseURL(t *testing.T) {
+	fdb := newFakeAuthDB(t)
+	u, _ := fdb.CreateUser(context.Background(), "admin", "admin1234", true)
+	sess, _ := fdb.CreateSession(context.Background(), u.ID, "127.0.0.1", "test", SessionTTL)
+	publicURL := "http://117.55.237.250"
+	h := NewRouter(Options{
+		AuthDB: fdb.DB,
+		GetUpstreams: func(ctx context.Context) ([]Upstream, error) {
+			return []Upstream{
+				{ID: 1, Name: "dockerhub", UpstreamURL: "https://registry-1.docker.io", MirrorPath: "/v2", Enabled: true},
+			}, nil
+		},
+		PublicBaseURL: publicURL,
+	})
+
+	req := httptest.NewRequest("GET", "/api/docker/daemon.json", nil)
+	req.Host = "example.com"
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.Token})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, publicURL) {
+		t.Errorf("daemon.json missing PublicBaseURL %q:\n%s", publicURL, body)
+	}
+	if strings.Contains(body, "example.com") {
+		t.Errorf("daemon.json leaked r.Host (example.com):\n%s", body)
+	}
+	if strings.Contains(body, "127.0.0.1:8082") {
+		t.Errorf("daemon.json contains internal 127.0.0.1:8082:\n%s", body)
 	}
 }

@@ -31,6 +31,10 @@ const (
 	SettingAccessControlToken          = "access_control_token"           // 任意字符串（启用时为空就视为 disabled）
 	SettingAccessControlIPWhitelist    = "access_control_ip_whitelist"    // 逗号分隔 CIDR（例 "10.0.0.0/8,192.168.0.0/16"）
 	SettingAccessControlLoopbackBypass = "access_control_loopback_bypass" // "true"/"false"，127/8 永远放行（默认 true）
+	// 公开 Base URL（让 admin 配客户端可访问的 CNCH 地址）
+	// 用于生成 client config（daemon.json / hosts.toml / k3s / verify.sh 等）。
+	// 留空时 fallback 到 r.Host（nginx 直连场景）。
+	SettingPublicBaseURL = "public_base_url"
 )
 
 // GetSetting 按 key 查。

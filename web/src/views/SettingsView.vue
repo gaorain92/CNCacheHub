@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Brush, Coin, Connection, Lock, Promotion, SetUp, Warning } from '@element-plus/icons-vue'
+import { Brush, Coin, Connection, Link, Lock, Promotion, SetUp, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
@@ -16,6 +16,11 @@ const maxObjectSizeMb = ref(1024)
 const cacheTotalGb = ref(20)
 const cleanupTriggerPct = ref(80)
 const cleanupTargetPct = ref(60)
+const publicBaseUrl = ref('')
+
+// 模板里要用 location（vue 模板没有 window 顶层）
+const currentLocation =
+  typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : '当前访问地址'
 
 const saving = ref(false)
 
@@ -42,6 +47,7 @@ function syncFromStore(): void {
   cacheTotalGb.value = settings.data.cacheTotalGb
   cleanupTriggerPct.value = settings.data.cleanupTriggerPct
   cleanupTargetPct.value = settings.data.cleanupTargetPct
+  publicBaseUrl.value = settings.data.publicBaseUrl || ''
 }
 
 function syncAccessFromStore(): void {
@@ -69,7 +75,8 @@ const dirty = computed(() => {
     maxObjectSizeMb.value !== settings.data.maxObjectSizeMb ||
     cacheTotalGb.value !== settings.data.cacheTotalGb ||
     cleanupTriggerPct.value !== settings.data.cleanupTriggerPct ||
-    cleanupTargetPct.value !== settings.data.cleanupTargetPct
+    cleanupTargetPct.value !== settings.data.cleanupTargetPct ||
+    (publicBaseUrl.value || '') !== (settings.data.publicBaseUrl || '')
   )
 })
 
@@ -114,6 +121,7 @@ async function onSave(): Promise<void> {
     cacheTotalGb: cacheTotalGb.value,
     cleanupTriggerPct: cleanupTriggerPct.value,
     cleanupTargetPct: cleanupTargetPct.value,
+    publicBaseUrl: publicBaseUrl.value,
   })
   saving.value = false
   if (ok) {
@@ -274,6 +282,30 @@ function generateRandomToken(): void {
           <p class="text-xs text-slate-500 mt-1">超出走旁路</p>
         </div>
       </div>
+    </div>
+
+    <!-- 公开 Base URL（让客户端能拿到正确的访问地址） -->
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 p-6 space-y-4">
+      <div class="flex items-center gap-2">
+        <el-icon :size="18" color="#a3e635"><Link /></el-icon>
+        <h3 class="text-base font-semibold">公开 Base URL</h3>
+        <span class="text-xs text-slate-500">客户端可访问的 CNCH 地址</span>
+      </div>
+      <p class="text-sm text-slate-400 leading-relaxed">
+        用于生成 <code class="text-mint">daemon.json</code> / <code class="text-mint">hosts.toml</code> /
+        <code class="text-mint">k3s</code> 镜像 / <code class="text-mint">verify.sh</code>
+        等客户端配置。直接复制配置到目标机器时，配置里写入的 IP 必须是它们能访问到的 CNCH 地址。
+      </p>
+      <el-input
+        v-model="publicBaseUrl"
+        placeholder="例如 http://117.55.237.250（留空 = 用当前访问地址）"
+        :disabled="!auth.isAdmin"
+      />
+      <p class="text-xs text-slate-500">
+        · 留空时使用 <code class="text-slate-400">{{ currentLocation }}</code>（请求 Host 推断）<br>
+        · 公网部署强烈建议填入公网 IP 或域名，避免 nginx 反代时 Host 头丢失<br>
+        · 修改后立即生效，下次下载配置包即用新值
+      </p>
     </div>
 
     <!-- 清理策略 -->

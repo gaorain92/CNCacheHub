@@ -178,6 +178,10 @@ type Options struct {
 	// APIRateLimiter 限制通用 API 写操作的请求频率（防 DoS）。
 	// nil 时不限制。
 	APIRateLimiter *ratelimit.Limiter
+	// PublicBaseURL 客户端可访问的 CNCH 公开地址（admin 在 SettingsView 配）。
+	// 用于生成 client config（daemon.json / hosts.toml / k3s / verify.sh 等）。
+	// 空字符串 = fallback 到 r.Host。
+	PublicBaseURL string
 }
 
 
@@ -267,17 +271,19 @@ type SystemSettings struct {
 	CacheTotalGB      int    `json:"cacheTotalGb"`
 	CleanupTriggerPct int    `json:"cleanupTriggerPct"`
 	CleanupTargetPct  int    `json:"cleanupTargetPct"`
+	PublicBaseURL     string `json:"publicBaseUrl"`
 	UpdatedAt         int64  `json:"updatedAt"`
 }
 
 // SettingsPatch 是 PATCH /api/settings 入参（所有字段可选）。
 type SettingsPatch struct {
-	SmallVPSOpt       *bool `json:"smallVpsOpt,omitempty"`
-	ReserveSpaceGB    *int  `json:"reserveSpaceGb,omitempty"`
-	MaxObjectSizeMB   *int  `json:"maxObjectSizeMb,omitempty"`
-	CacheTotalGB      *int  `json:"cacheTotalGb,omitempty"`
-	CleanupTriggerPct *int  `json:"cleanupTriggerPct,omitempty"`
-	CleanupTargetPct  *int  `json:"cleanupTargetPct,omitempty"`
+	SmallVPSOpt       *bool   `json:"smallVpsOpt,omitempty"`
+	ReserveSpaceGB    *int    `json:"reserveSpaceGb,omitempty"`
+	MaxObjectSizeMB   *int    `json:"maxObjectSizeMb,omitempty"`
+	CacheTotalGB      *int    `json:"cacheTotalGb,omitempty"`
+	CleanupTriggerPct *int    `json:"cleanupTriggerPct,omitempty"`
+	CleanupTargetPct  *int    `json:"cleanupTargetPct,omitempty"`
+	PublicBaseURL     *string `json:"publicBaseUrl,omitempty"`
 }
 
 // RegistryPatch 是 PATCH /api/registries/:name 入参。

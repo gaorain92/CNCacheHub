@@ -130,6 +130,16 @@ func run() error {
 		"loopback_bypass", accessGet().LoopbackBypass,
 	)
 
+	// 3d. 公开 Base URL 解析器（client config 生成器用）。
+	// 启动时从 DB 读一次；admin 通过 PATCH /api/settings 改值后 reload。
+	publicBaseURLGet := loadPublicBaseURL(rootCtx, db)
+	publicBaseURLReload := func() {
+		publicBaseURLGet = loadPublicBaseURL(rootCtx, db)
+	}
+	if publicBaseURLGet != "" {
+		logpkg.Info("public base url", "url", publicBaseURLGet)
+	}
+
 	// 4. 初始化 cache + 上游 + proxy。
 	// 4a. 优先从 DB 读 settings（UI 改值后重启会保留），fallback 到 cfg。
 	maxMB := cfg.MaxObjectSizeMB
@@ -249,7 +259,7 @@ func run() error {
 		RunCleanupTask:      makeRunCleanupTaskAdapter(db, fs),
 		GetUpstreamHealth:   makeGetUpstreamHealthAdapter(upstreamHealth),
 		GetSettings:         makeGetSettingsAdapter(db),
-		UpdateSettings:      makeUpdateSettingsAdapter(db, fs),
+		UpdateSettings:      makeUpdateSettingsAdapter(db, fs, publicBaseURLReload),
 		DryRunCleanup:       makeDryRunCleanupAdapter(db),
 		ListRegistries:         makeListRegistriesAdapter(db),
 		SetRegistryEnabled:     makeSetRegistryEnabledAdapter(db),
@@ -313,6 +323,8 @@ func run() error {
 		// Rate limiters（PRD §15.3）
 		LoginRateLimiter: loginLimiter,
 		APIRateLimiter:   apiLimiter,
+		// 公开 Base URL（client config 生成器用，admin PATCH settings 后会 reload）
+		PublicBaseURL: publicBaseURLGet,
 		// client config 生成器需 GetSettings + ListRegistries；Options 已含两者
 	})
 	srv := &http.Server{
@@ -527,6 +539,8 @@ func makeGetSettingsAdapter(db *storage.DB) func(ctx context.Context) (api.Syste
 				out.CleanupTriggerPct = atoiSafe(s.Value, 80)
 			case storage.SettingCleanupTargetPct:
 				out.CleanupTargetPct = atoiSafe(s.Value, 60)
+			case storage.SettingPublicBaseURL:
+				out.PublicBaseURL = s.Value
 			}
 			if s.UpdatedAt > latest {
 				latest = s.UpdatedAt
@@ -538,7 +552,9 @@ func makeGetSettingsAdapter(db *storage.DB) func(ctx context.Context) (api.Syste
 }
 
 // makeUpdateSettingsAdapter PATCH 部分字段。
-func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore) func(ctx context.Context, patch api.SettingsPatch, userID int64) (api.SystemSettings, error) {
+//
+// onUpdate 可选：写完 DB 后调用（用来热重载 public base URL 等）。
+func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore, onUpdate func()) func(ctx context.Context, patch api.SettingsPatch, userID int64) (api.SystemSettings, error) {
 	return func(ctx context.Context, patch api.SettingsPatch, userID int64) (api.SystemSettings, error) {
 		kvs := map[string]string{}
 		if patch.SmallVPSOpt != nil {
@@ -563,6 +579,9 @@ func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore) func(ctx con
 		if patch.CleanupTargetPct != nil {
 			kvs[storage.SettingCleanupTargetPct] = itoa(*patch.CleanupTargetPct)
 		}
+		if patch.PublicBaseURL != nil {
+			kvs[storage.SettingPublicBaseURL] = strings.TrimRight(*patch.PublicBaseURL, "/")
+		}
 		if err := db.SetMany(ctx, kvs, userID); err != nil {
 			return api.SystemSettings{}, err
 		}
@@ -585,6 +604,10 @@ func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore) func(ctx con
 				"reserve_space_gb", s.ReserveSpaceGB,
 				"small_vps_opt", s.SmallVPSOpt,
 			)
+		}
+		// 其它热重载钩子（public base URL 等）
+		if onUpdate != nil {
+			onUpdate()
 		}
 		if userID > 0 {
 			_ = db.WriteAudit(ctx, storage.AuditLog{
@@ -704,6 +727,17 @@ func loadAccessConfig(ctx context.Context, db *storage.DB) access.Config {
 	}
 }
 
+// loadPublicBaseURL 从 DB 读 SettingPublicBaseURL。
+//
+// 缺失/出错返空字符串。空字符串时 api 用 r.Host 兜底。
+func loadPublicBaseURL(ctx context.Context, db *storage.DB) string {
+	s, err := db.GetSetting(ctx, storage.SettingPublicBaseURL)
+	if err != nil || s == nil {
+		return ""
+	}
+	return strings.TrimRight(s.Value, "/")
+}
+
 // masterKeyCipher 实现 api.Cipher 接口（用 internal/crypto 的 AES-256-GCM）。
 type masterKeyCipher struct {
 	key []byte
@@ -770,6 +804,9 @@ func summarizePatch(p api.SettingsPatch) string {
 	}
 	if p.CleanupTargetPct != nil {
 		parts = append(parts, "cleanup_target_pct="+itoa(*p.CleanupTargetPct))
+	}
+	if p.PublicBaseURL != nil {
+		parts = append(parts, "public_base_url="+*p.PublicBaseURL)
 	}
 	if len(parts) == 0 {
 		return "noop"

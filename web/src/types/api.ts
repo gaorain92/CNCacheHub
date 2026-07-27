@@ -78,6 +78,7 @@ export interface SystemSettings {
   cacheTotalGb: number
   cleanupTriggerPct: number
   cleanupTargetPct: number
+  publicBaseUrl: string
   updatedAt: number
 }
 
@@ -88,6 +89,7 @@ export interface SettingsPatch {
   cacheTotalGb?: number
   cleanupTriggerPct?: number
   cleanupTargetPct?: number
+  publicBaseUrl?: string
 }
 
 // ============================================================================

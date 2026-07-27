@@ -29,8 +29,15 @@ var timeNowUnix = func() int64 { return time.Now().Unix() }
 
 // clientBaseURL 推断客户端访问 CNCacheHub 的 base URL。
 //
-// 优先级：X-Forwarded-Proto + X-Forwarded-Host > r.TLS + r.Host > r.Host (http)
-func clientBaseURL(r *http.Request) string {
+// 优先级：opts.PublicBaseURL（admin 在 SettingsView 配的）> r.Host 推断。
+//
+// 为什么不直接用 r.Host：nginx 默认 proxy_set_header Host $proxy_host
+// 让后端 r.Host 永远是 127.0.0.1:8082 而不是用户访问的公网 IP。
+// 所以让 admin 显式配一次最稳；如果没配，fallback 到 r.Host（直连 8082 场景）。
+func clientBaseURL(opts Options, r *http.Request) string {
+	if opts.PublicBaseURL != "" {
+		return opts.PublicBaseURL
+	}
 	scheme := "http"
 	host := r.Host
 	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
@@ -71,8 +78,8 @@ type clientConfigContext struct {
 }
 
 // clientConfigContextFromReq 从 request + DB registry 构造上下文。
-func clientConfigContextFromReq(r *http.Request, reg storage.Registry) clientConfigContext {
-	base := clientBaseURL(r)
+func clientConfigContextFromReq(opts Options, r *http.Request, reg storage.Registry) clientConfigContext {
+	base := clientBaseURL(opts, r)
 	mirrorPath := reg.MirrorPath
 	if mirrorPath == "" {
 		mirrorPath = "/v2"
@@ -213,7 +220,7 @@ func generateClientConfigHandler(opts Options) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "registry_disabled", "registry "+registryName+" is disabled")
 			return
 		}
-		ctx := clientConfigContextFromReq(r, storage.Registry{
+		ctx := clientConfigContextFromReq(opts, r, storage.Registry{
 			ID:          reg.ID,
 			Name:        reg.Name,
 			UpstreamURL: reg.UpstreamURL,
@@ -689,7 +696,7 @@ func generateClientConfigBundleHandler(opts Options) http.HandlerFunc {
 			writeInternalErr(w, r, "registries_query_failed", err)
 			return
 		}
-		base := clientBaseURL(r)
+		base := clientBaseURL(opts, r)
 		files := buildClientConfigBundle(base, regs)
 
 		// 写 zip header
