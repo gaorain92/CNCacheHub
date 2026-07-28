@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import {
   Connection,
   DataLine,
-  FolderOpened,
   Lightning,
   Promotion,
   Refresh,
@@ -41,7 +40,7 @@ const welcomeSubtitle = computed(() => {
   }
   return health.errorMessage
     ? `未能访问后端 API：${health.errorMessage}。请确认 server 进程已启动。`
-    : '请确认后端服务已启动（生产端口 8082，开发模式由 Vite 代理转发 /api）。'
+    : '等待后端连接（生产端口 8082；开发模式由 Vite 代理转发 /api）。'
 })
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -70,8 +69,8 @@ async function refresh(): Promise<void> {
   <section class="space-y-6">
     <header class="flex items-center justify-between">
       <div>
-        <h1 class="text-3xl font-semibold">{{ welcomeTitle }}</h1>
-        <p class="text-sm text-slate-400 mt-1">{{ welcomeSubtitle }}</p>
+        <h2 class="text-lg font-semibold text-slate-100">{{ welcomeTitle }}</h2>
+        <p class="text-sm text-slate-400 mt-0.5">{{ welcomeSubtitle }}</p>
       </div>
       <div class="flex items-center gap-3">
         <StatusDot :status="dotStatus" />
@@ -80,54 +79,53 @@ async function refresh(): Promise<void> {
     </header>
 
     <!-- 健康卡片 -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
-        <div class="text-xs text-slate-500 mb-2">后端状态</div>
-        <div class="text-2xl font-semibold" :class="health.backendConnected ? 'text-mint' : 'text-rose-400'">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div class="rounded-xl border border-white/[.08] bg-black/20 p-4">
+        <div class="text-xs text-slate-500 mb-1.5">后端状态</div>
+        <div class="text-xl font-semibold" :class="health.backendConnected ? 'text-mint' : 'text-slate-400'">
           {{ health.backendConnected ? '在线' : '离线' }}
         </div>
-        <div class="text-xs text-slate-500 mt-2">uptime {{ health.uptime }}</div>
+        <div class="text-[11px] text-slate-500 mt-1.5">uptime {{ health.uptime }}</div>
       </div>
 
-      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
-        <div class="text-xs text-slate-500 mb-2">上游 Registry</div>
-        <div class="text-2xl font-semibold flex items-center gap-2" :class="upstreamStatus === 'ok' ? 'text-mint' : 'text-rose-400'">
-          <el-icon :size="18"><Connection /></el-icon>
+      <div class="rounded-xl border border-white/[.08] bg-black/20 p-4">
+        <div class="text-xs text-slate-500 mb-1.5">上游 Registry</div>
+        <div class="text-xl font-semibold flex items-center gap-2" :class="upstreamStatus === 'ok' ? 'text-mint' : 'text-slate-400'">
+          <el-icon :size="16"><Connection /></el-icon>
           {{ upstreamStatus === 'ok' ? '可达' : upstreamStatus === 'down' ? '不可达' : '检测中' }}
         </div>
-        <div class="text-xs text-slate-500 mt-2">
+        <div class="text-[11px] text-slate-500 mt-1.5">
           <span v-if="upstream.data">{{ upstream.data.latencyMs }}ms · {{ upstream.data.url.replace('https://', '').replace('http://', '') }}</span>
           <span v-else>等待首次检测…</span>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
-        <div class="text-xs text-slate-500 mb-2">缓存条目</div>
-        <div class="text-2xl font-semibold text-slate-100">
+      <div class="rounded-xl border border-white/[.08] bg-black/20 p-4">
+        <div class="text-xs text-slate-500 mb-1.5">缓存条目</div>
+        <div class="text-xl font-semibold text-slate-100">
           {{ dashboard.data?.cacheEntries ?? '—' }}
         </div>
-        <div class="text-xs text-slate-500 mt-2">
-          <el-icon :size="12"><FolderOpened /></el-icon>
+        <div class="text-[11px] text-slate-500 mt-1.5">
           {{ dashboard.cacheBytesHuman }}
         </div>
       </div>
 
-      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
-        <div class="text-xs text-slate-500 mb-2">命中率 · 24h</div>
-        <div class="text-2xl font-semibold text-slate-100">
+      <div class="rounded-xl border border-white/[.08] bg-black/20 p-4">
+        <div class="text-xs text-slate-500 mb-1.5">命中率 · 24h</div>
+        <div class="text-xl font-semibold text-slate-100">
           {{ dashboard.hitRate.toFixed(1) }}%
         </div>
-        <div class="text-xs text-slate-500 mt-2">
-          hit {{ dashboard.data?.hitCount ?? 0 }} · miss {{ dashboard.data?.missCount ?? 0 }} · 总命中 {{ dashboard.data?.cacheHits ?? 0 }}
+        <div class="text-[11px] text-slate-500 mt-1.5">
+          hit {{ dashboard.data?.hitCount ?? 0 }} · miss {{ dashboard.data?.missCount ?? 0 }}
         </div>
       </div>
 
-      <div class="rounded-2xl border border-white/[.08] bg-black/20 p-5">
-        <div class="text-xs text-slate-500 mb-2">24h 流量</div>
-        <div class="text-2xl font-semibold text-slate-100">
+      <div class="rounded-xl border border-white/[.08] bg-black/20 p-4">
+        <div class="text-xs text-slate-500 mb-1.5">24h 流量</div>
+        <div class="text-xl font-semibold text-slate-100">
           {{ dashboard.bytesOut24hHuman }}
         </div>
-        <div class="text-xs text-slate-500 mt-2">
+        <div class="text-[11px] text-slate-500 mt-1.5">
           {{ dashboard.data?.requestCount24h ?? 0 }} requests
         </div>
       </div>
@@ -144,32 +142,32 @@ async function refresh(): Promise<void> {
     </div>
 
     <!-- 路由入口 -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
       <router-link
         to="/docker"
-        class="rounded-2xl border border-white/[.08] bg-black/20 p-5 hover:border-mint/30 transition group"
+        class="rounded-xl border border-white/[.08] bg-black/20 p-4 hover:border-mint/30 transition group"
       >
-        <el-icon :size="22" color="#94a3b8" class="mb-2 group-hover:text-mint"><Promotion /></el-icon>
+        <el-icon :size="18" color="#94a3b8" class="mb-2 group-hover:text-mint"><Promotion /></el-icon>
         <div class="text-sm font-medium">Docker 加速</div>
-        <div class="text-xs text-slate-500 mt-1">生成 daemon.json · 客户端接入</div>
+        <div class="text-xs text-slate-500 mt-0.5">生成 daemon.json · 客户端接入</div>
       </router-link>
 
       <router-link
         to="/logs"
-        class="rounded-2xl border border-white/[.08] bg-black/20 p-5 hover:border-mint/30 transition group"
+        class="rounded-xl border border-white/[.08] bg-black/20 p-4 hover:border-mint/30 transition group"
       >
-        <el-icon :size="22" color="#94a3b8" class="mb-2 group-hover:text-mint"><DataLine /></el-icon>
+        <el-icon :size="18" color="#94a3b8" class="mb-2 group-hover:text-mint"><DataLine /></el-icon>
         <div class="text-sm font-medium">访问日志</div>
-        <div class="text-xs text-slate-500 mt-1">实时请求 · 命中状态 · 错误诊断</div>
+        <div class="text-xs text-slate-500 mt-0.5">实时请求 · 命中状态 · 错误诊断</div>
       </router-link>
 
       <router-link
         to="/cache"
-        class="rounded-2xl border border-white/[.08] bg-black/20 p-5 hover:border-mint/30 transition group"
+        class="rounded-xl border border-white/[.08] bg-black/20 p-4 hover:border-mint/30 transition group"
       >
-        <el-icon :size="22" color="#94a3b8" class="mb-2 group-hover:text-mint"><Lightning /></el-icon>
+        <el-icon :size="18" color="#94a3b8" class="mb-2 group-hover:text-mint"><Lightning /></el-icon>
         <div class="text-sm font-medium">缓存管理</div>
-        <div class="text-xs text-slate-500 mt-1">条目浏览 · LRU/容量清理 · 删除</div>
+        <div class="text-xs text-slate-500 mt-0.5">条目浏览 · LRU/容量清理 · 删除</div>
       </router-link>
     </div>
   </section>

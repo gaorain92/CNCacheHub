@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Box, Connection, Key, Link } from '@element-plus/icons-vue'
+import { Connection, Key, Link } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import DaemonJsonBlock from '@/components/DaemonJsonBlock.vue'
 import RegistryEditDialog from '@/components/RegistryEditDialog.vue'
@@ -48,14 +48,8 @@ function mirrorPathLabel(m: string): string {
 
 <template>
   <section class="space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><Box /></el-icon>
-      </div>
-      <div>
-        <h2 class="text-2xl font-semibold">Docker 加速</h2>
-        <p class="text-sm text-slate-400">Registry 代理缓存 · 客户端配置生成 · 上游状态</p>
-      </div>
+    <header class="flex items-center justify-between gap-3">
+      <p class="text-sm text-slate-400">Registry 代理缓存 · 客户端配置生成 · 上游状态</p>
     </header>
 
     <!-- 多 Registry 列表 -->

@@ -85,15 +85,7 @@ const onTabChange = (name: string | number): void => {
 <template>
   <section class="soft rounded-[2rem] p-8 space-y-6">
     <header class="flex items-center justify-between gap-3 flex-wrap">
-      <div class="flex items-center gap-3">
-        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-          <el-icon :size="22" color="#020617"><Document /></el-icon>
-        </div>
-        <div>
-          <h2 class="text-2xl font-semibold">客户端配置</h2>
-          <p class="text-sm text-slate-400">生成 Docker / containerd / k3s 客户端配置，一键复制粘贴接入。</p>
-        </div>
-      </div>
+      <p class="text-sm text-slate-400">生成 Docker / containerd / k3s 客户端配置，一键复制粘贴接入。</p>
       <el-button
         :icon="Download"
         type="primary"

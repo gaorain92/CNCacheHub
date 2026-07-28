@@ -96,9 +96,8 @@
     color: #f8fafc;
   }
 
-  /* Element Plus dark overrides — 透明化让 Tailwind 卡片样式生效 */
+  /* 让 Tailwind 卡片样式不被 EP 默认白色背景盖掉 */
   .el-table,
-  .el-input__wrapper,
   .el-card {
     background-color: transparent !important;
   }

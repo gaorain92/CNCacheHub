@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Brush, DataLine, Delete, Search } from '@element-plus/icons-vue'
+import { Brush, Delete, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCacheStore } from '@/stores/cache'
 import { getCleanupTasks, runCleanupTask, dryRunCleanupTask } from '@/api/cleanup'
@@ -101,15 +101,7 @@ async function runCleanup(t: CleanupTask): Promise<void> {
 <template>
   <section class="space-y-6">
     <header class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-          <el-icon :size="22" color="#020617"><DataLine /></el-icon>
-        </div>
-        <div>
-          <h2 class="text-2xl font-semibold">缓存管理</h2>
-          <p class="text-sm text-slate-400">共 {{ cache.total }} 条 · 本页 {{ cache.items.length }} 条</p>
-        </div>
-      </div>
+      <p class="text-sm text-slate-400">共 {{ cache.total }} 条 · 本页 {{ cache.items.length }} 条</p>
       <div class="flex items-center gap-2">
         <el-input
           :model-value="cache.query"

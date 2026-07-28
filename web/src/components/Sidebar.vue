@@ -81,12 +81,12 @@ const asideClass = computed(() =>
         :key="String(item.name)"
         type="button"
         :class="[
-          'nav-item flex w-full items-center gap-3 rounded-2xl border border-transparent px-4 py-3 text-left transition',
+          'nav-item flex w-full items-center gap-3 rounded-xl border border-transparent px-3 py-2 text-left transition',
           activeName === item.name ? 'active' : '',
         ]"
         @click="go(item)"
       >
-        <el-icon :size="18" class="shrink-0">
+        <el-icon :size="16" class="shrink-0">
           <component :is="item.icon" />
         </el-icon>
         <span class="flex-1">{{ item.label }}</span>
@@ -114,19 +114,30 @@ const asideClass = computed(() =>
 
 <style scoped>
 .nav-item {
-  color: #94a3b8;
+  color: #cbd5e1;
+  font-weight: 500;
   cursor: pointer;
 }
+.nav-item :deep(.el-icon) {
+  color: #94a3b8;
+}
 .nav-item:hover:not(:disabled) {
-  color: #f8fafc;
-  background: rgba(148, 163, 184, 0.09);
+  color: #f1f5f9;
+  background: rgba(148, 163, 184, 0.08);
   transform: translateX(2px);
 }
+.nav-item:hover:not(:disabled) :deep(.el-icon) {
+  color: #cbd5e1;
+}
 .nav-item.active {
-  color: #ecfeff;
-  background: linear-gradient(90deg, rgba(45, 212, 191, 0.18), rgba(139, 92, 246, 0.1));
-  border-color: rgba(45, 212, 191, 0.28);
+  color: #5eead4;
+  font-weight: 600;
+  background: linear-gradient(90deg, rgba(45, 212, 191, 0.16), rgba(45, 212, 191, 0.04));
+  border-color: rgba(45, 212, 191, 0.32);
   box-shadow: inset 3px 0 0 #2dd4bf;
+}
+.nav-item.active :deep(.el-icon) {
+  color: #2dd4bf;
 }
 .dot {
   width: 8px;

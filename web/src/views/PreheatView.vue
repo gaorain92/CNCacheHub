@@ -4,7 +4,6 @@ import {
   ArrowDown,
   Delete,
   FolderOpened,
-  HotWater,
   Plus,
   Refresh,
   VideoPlay,
@@ -197,18 +196,14 @@ watch(
 
 <template>
   <section class="space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><HotWater /></el-icon>
+    <header class="flex items-center justify-between gap-3">
+      <p class="text-sm text-slate-400">批量输入镜像 / Steam AppID，提前写入缓存。</p>
+      <div class="flex items-center gap-2">
+        <el-button :icon="Refresh" size="small" plain :loading="preheat.loading" @click="preheat.fetch()">刷新</el-button>
+        <el-button type="primary" :icon="Plus" size="small" :disabled="!auth.isAdmin" @click="openCreate">
+          新建任务
+        </el-button>
       </div>
-      <div class="flex-1">
-        <h2 class="text-2xl font-semibold">预热任务</h2>
-        <p class="text-sm text-slate-400">批量输入镜像 / Steam AppID，提前写入缓存。</p>
-      </div>
-      <el-button :icon="Refresh" size="small" plain :loading="preheat.loading" @click="preheat.fetch()">刷新</el-button>
-      <el-button type="primary" :icon="Plus" size="small" :disabled="!auth.isAdmin" @click="openCreate">
-        新建任务
-      </el-button>
     </header>
 
     <div v-if="preheat.errorMessage" class="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-300">

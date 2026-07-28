@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import {
   Delete,
   Edit,
-  FolderOpened,
   Position,
   Refresh,
 } from '@element-plus/icons-vue'
@@ -240,17 +239,13 @@ function formatBytes(n: number): string {
 
 <template>
   <section class="space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><FolderOpened /></el-icon>
+    <header class="flex items-center justify-between gap-3">
+      <p class="text-sm text-slate-400">白名单 URL 缓存 · GitHub / Hugging Face / Playwright / Terraform / 自定义</p>
+      <div class="flex items-center gap-2">
+        <el-button :icon="Refresh" size="small" plain :loading="resources.loading" @click="resources.fetch()">刷新</el-button>
+        <el-button size="small" plain @click="openTemplates">模板库</el-button>
+        <el-button type="primary" size="small" :disabled="!auth.isAdmin" @click="openCreate">新增 rule</el-button>
       </div>
-      <div class="flex-1">
-        <h2 class="text-2xl font-semibold">资源加速中心</h2>
-        <p class="text-sm text-slate-400">白名单 URL 缓存 · GitHub / Hugging Face / Playwright / Terraform / 自定义</p>
-      </div>
-      <el-button :icon="Refresh" size="small" plain :loading="resources.loading" @click="resources.fetch()">刷新</el-button>
-      <el-button size="small" plain @click="openTemplates">模板库</el-button>
-      <el-button type="primary" size="small" :disabled="!auth.isAdmin" @click="openCreate">新增 rule</el-button>
     </header>
 
     <div v-if="resources.errorMessage" class="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-300">

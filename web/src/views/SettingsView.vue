@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Brush, Coin, Connection, Link, Lock, Promotion, SetUp, Warning } from '@element-plus/icons-vue'
+import { Brush, Coin, Connection, Link, Lock, Promotion, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
@@ -186,15 +186,7 @@ function generateRandomToken(): void {
 <template>
   <section class="space-y-6">
     <header class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-          <el-icon :size="22" color="#020617"><SetUp /></el-icon>
-        </div>
-        <div>
-          <h2 class="text-2xl font-semibold">系统设置</h2>
-          <p class="text-sm text-slate-400">小容量 VPS 优化 · 缓存上限 · 清理策略</p>
-        </div>
-      </div>
+      <p class="text-sm text-slate-400">小容量 VPS 优化 · 缓存上限 · 清理策略</p>
       <div class="flex items-center gap-2">
         <el-button v-if="dirty" plain @click="onReset">放弃修改</el-button>
         <el-button

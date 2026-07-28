@@ -7,7 +7,6 @@ import {
   Delete,
   Edit,
   FolderOpened,
-  Goods,
   HotWater,
   Plus,
   Position,
@@ -299,14 +298,8 @@ async function onPreheat(a: { id: number; appId: number; name: string; loginType
 
 <template>
   <section class="space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><Goods /></el-icon>
-      </div>
-      <div class="flex-1">
-        <h2 class="text-2xl font-semibold">SteamCMD 加速</h2>
-        <p class="text-sm text-slate-400">DNS 启动器 · LANCache 风格劫持 · AppID 缓存指引</p>
-      </div>
+    <header class="flex items-center justify-between gap-3">
+      <p class="text-sm text-slate-400">DNS 启动器 · LANCache 风格劫持 · AppID 缓存指引</p>
       <el-button :icon="Refresh" size="small" plain :loading="dns.loading" @click="dns.fetch()">刷新</el-button>
     </header>
 

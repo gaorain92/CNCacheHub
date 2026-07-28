@@ -64,7 +64,7 @@ function onUserCommand(c: string): void {
 
 <template>
   <header
-    class="sticky top-5 z-10 mb-6 glass rounded-[2rem] px-5 py-4 flex items-center justify-between gap-4"
+    class="sticky top-5 z-10 mb-5 glass rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4"
   >
     <div class="min-w-0">
       <div class="text-xs text-slate-400 flex items-center gap-2">
@@ -74,7 +74,7 @@ function onUserCommand(c: string): void {
         <span v-if="health.backendConnected" class="text-mint">后端已连接</span>
         <span v-else class="text-rose-300">后端未连接</span>
       </div>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight truncate">
+      <h1 class="mt-1 text-xl font-semibold tracking-tight truncate">
         {{ pageTitle }}
       </h1>
     </div>

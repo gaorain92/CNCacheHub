@@ -144,13 +144,10 @@ function formatTime(ts: number): string {
 <template>
   <section class="space-y-5">
     <header class="flex items-center justify-between">
-      <div>
-        <h2 class="text-2xl font-semibold">访问日志</h2>
-        <p class="text-sm text-slate-400">
-          共 {{ logs.total }} 条
-          <template v-if="hasActiveFilters"> · <span class="text-amber-400">筛选中</span></template>
-        </p>
-      </div>
+      <p class="text-sm text-slate-400">
+        共 {{ logs.total }} 条
+        <template v-if="hasActiveFilters"> · <span class="text-amber-400">筛选中</span></template>
+      </p>
       <div class="flex items-center gap-2">
         <el-button
           :icon="Search"
@@ -286,7 +283,7 @@ function formatTime(ts: number): string {
               >
                 {{ bypassLabel(item.bypassReason) }}
               </el-tag>
-              <el-tag v-else size="small" effect="plain">MISS</el-tag>
+              <el-tag v-else type="info" size="small" effect="dark">MISS</el-tag>
             </td>
             <td class="px-4 py-2 text-xs text-slate-500 font-mono">{{ item.clientIp }}</td>
           </tr>

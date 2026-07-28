@@ -3,7 +3,6 @@ import { computed, onMounted } from 'vue'
 import {
   Check,
   CircleClose,
-  FirstAidKit,
   Refresh,
   Warning,
 } from '@element-plus/icons-vue'
@@ -109,14 +108,8 @@ const errCount = computed(() => {
 
 <template>
   <section class="space-y-6">
-    <header class="flex items-center gap-3">
-      <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-mint to-violet flex items-center justify-center shadow-glow">
-        <el-icon :size="22" color="#020617"><FirstAidKit /></el-icon>
-      </div>
-      <div class="flex-1">
-        <h2 class="text-2xl font-semibold">诊断中心</h2>
-        <p class="text-sm text-slate-400">下载失败 / DNS 未生效 / 证书错误的一键排查。</p>
-      </div>
+    <header class="flex items-center justify-between gap-3">
+      <p class="text-sm text-slate-400">下载失败 / DNS 未生效 / 证书错误的一键排查。</p>
       <el-button
         type="primary"
         :icon="Refresh"
