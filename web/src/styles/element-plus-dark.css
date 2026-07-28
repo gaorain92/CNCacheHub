@@ -46,6 +46,14 @@ html.dark {
   --el-button-active-text-color: #042f2e;
   --el-button-active-border-color: #14b8a6;
 }
+/* disabled primary：半透明 mint 底 + 可读文字，而非 EP 默认的极低 opacity */
+.el-button--primary.is-disabled,
+.el-button--primary:disabled {
+  background-color: rgba(45, 212, 191, 0.35) !important;
+  border-color: rgba(45, 212, 191, 0.35) !important;
+  color: rgba(4, 47, 46, 0.6) !important;
+  cursor: not-allowed;
+}
 
 /* --- Input focus 色 --- */
 .el-input__wrapper.is-focus,
