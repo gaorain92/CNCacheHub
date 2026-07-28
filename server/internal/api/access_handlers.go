@@ -55,11 +55,15 @@ func accessControlGetHandler(opts Options) http.HandlerFunc {
 			return
 		}
 
+		whitelist := access.ParseCIDRList(settings[storage.SettingAccessControlIPWhitelist])
+		if whitelist == nil {
+			whitelist = []string{} // JSON 不要 null
+		}
 		out := AccessControlConfig{
 			Enabled:        settings[storage.SettingAccessControlEnabled] == "true",
 			Token:          "",
 			TokenSet:       settings[storage.SettingAccessControlToken] != "",
-			IPWhitelist:    access.ParseCIDRList(settings[storage.SettingAccessControlIPWhitelist]),
+			IPWhitelist:    whitelist,
 			LoopbackBypass: settings[storage.SettingAccessControlLoopbackBypass] != "false", // 默认 true
 		}
 		_ = out // updated_at 留给前端通过 settings 列表拿
@@ -158,11 +162,15 @@ func accessControlPutHandler(opts Options) http.HandlerFunc {
 			storage.SettingAccessControlIPWhitelist,
 			storage.SettingAccessControlLoopbackBypass,
 		)
+		whitelist := access.ParseCIDRList(settings[storage.SettingAccessControlIPWhitelist])
+		if whitelist == nil {
+			whitelist = []string{}
+		}
 		out := AccessControlConfig{
 			Enabled:        settings[storage.SettingAccessControlEnabled] == "true",
 			Token:          "",
 			TokenSet:       settings[storage.SettingAccessControlToken] != "",
-			IPWhitelist:    access.ParseCIDRList(settings[storage.SettingAccessControlIPWhitelist]),
+			IPWhitelist:    whitelist,
 			LoopbackBypass: settings[storage.SettingAccessControlLoopbackBypass] != "false",
 		}
 		writeJSON(w, http.StatusOK, out)

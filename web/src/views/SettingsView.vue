@@ -57,7 +57,7 @@ function syncAccessFromStore(): void {
   acEnabled.value = access.data.enabled
   acTokenSet.value = access.data.tokenSet
   acToken.value = '' // 永远不要在 UI 显示已存的 token
-  acIpWhitelistText.value = access.data.ipWhitelist.join('\n')
+  acIpWhitelistText.value = (access.data.ipWhitelist ?? []).join('\n')
   acLoopbackBypass.value = access.data.loopbackBypass
 }
 
@@ -95,7 +95,7 @@ const acDirty = computed(() => {
     .split(/[\n,]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
-  const orig = access.data.ipWhitelist
+  const orig = access.data.ipWhitelist ?? []
   if (cur.length !== orig.length) return true
   for (let i = 0; i < cur.length; i++) {
     if (cur[i] !== orig[i]) return true

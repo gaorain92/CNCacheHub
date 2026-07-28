@@ -20,9 +20,9 @@ export interface AccessControlPatch {
 }
 
 export function getAccessControl(): Promise<AccessControlConfig> {
-  return api.get('/api/access-control').then((r) => r.data as AccessControlConfig)
+  return api.get('/access-control').then((r) => r.data as AccessControlConfig)
 }
 
 export function updateAccessControl(patch: AccessControlPatch): Promise<AccessControlConfig> {
-  return api.put('/api/access-control', patch).then((r) => r.data as AccessControlConfig)
+  return api.put('/access-control', patch).then((r) => r.data as AccessControlConfig)
 }
