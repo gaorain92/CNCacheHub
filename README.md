@@ -68,6 +68,43 @@ curl http://localhost:8080/api/healthz
 
 ## 快速开始（生产模式）
 
+### 方式 1：一键部署脚本（推荐）
+
+```bash
+# 交互模式 — 逐步问关键参数
+./scripts/install.sh
+
+# 极速模式 — 用默认值 + 随机管理员密码
+./scripts/install.sh --mode=express
+
+# 专家模式 — 暴露所有参数
+./scripts/install.sh --mode=expert \
+  --admin-password=xxx \
+  --http-port=80 \
+  --tls-mode=letsencrypt \
+  --domain=cnch.example.com \
+  --admin-email=admin@example.com
+
+# 远程部署（在开发机上跑，自动 ssh 到目标）
+./scripts/install.sh --mode=express --host=root@1.2.3.4 --ssh-key=~/.ssh/id_ed25519
+
+# 升级 / 卸载
+./scripts/install.sh update --mode=express
+./scripts/install.sh uninstall --purge
+```
+
+支持的参数完整列表：`./scripts/install.sh --help`
+
+**特性**：
+- 三种模式：`interactive` / `express` / `expert` — 从零对话到一键静默
+- 两种位置：`local`（在目标机上跑）/ `remote`（在开发机通过 ssh 推）
+- 三个子命令：`init` / `update` / `uninstall`（含 `--purge` 删数据）
+- TLS 模式：HTTP only / 自签证书 / Let's Encrypt（自动签发）
+- 启动后健康检查 `/healthz`，失败给 docker compose logs 提示
+- 生成配置写到 `deploy/generated/`（已 gitignore，敏感信息不进 git）
+
+### 方式 2：手动部署
+
 ```bash
 cd deploy
 cp .env.example .env
