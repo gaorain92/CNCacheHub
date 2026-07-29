@@ -203,11 +203,12 @@ parse_args() {
 # ============================================================================
 gen_password() {
   # 22 字符 base62（足够强度 + 看得清）
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 22
+  # macOS head close pipe 会让 tr SIGPIPE → 加 || true 防 set -e 误判
+  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 22 || true
 }
 
 random_hex() {
-  LC_ALL=C tr -dc '0-9a-f' </dev/urandom | head -c 16
+  LC_ALL=C tr -dc '0-9a-f' </dev/urandom | head -c 16 || true
 }
 
 run() {
@@ -287,7 +288,8 @@ confirm() {
   if [[ "$MODE" == "express" ]]; then
     [[ "$default" == "y" ]] && return 0 || return 1
   fi
-  read -r -p "$(echo -e "${C_BLU}?${C_OFF} $prompt [$default] ")" answer
+  printf "%s" "$(echo -e "${C_BLU}?${C_OFF} $prompt [$default] ")" >&2 || true
+  set +e; read -r answer; set -e
   answer="${answer:-$default}"
   [[ "$answer" =~ ^[Yy] ]]
 }
@@ -296,19 +298,122 @@ prompt_value() {
   local prompt="$1"
   local default="$2"
   local secret="${3:-}"
+  local validator="${4:-}"  # 可选：调用 validator "$value" 验证，失败重新问
   local answer
-  if [[ "$MODE" == "express" ]]; then
+  # express 模式直接返回默认（连 secret 都不问 — 通常密码会用 generate 兜底）
+  if [[ "$MODE" == "express" && -z "$secret" ]]; then
     echo -n "$default"
     return 0
   fi
-  if [[ "$secret" == "secret" ]]; then
-    read -r -s -p "$(echo -e "${C_BLU}?${C_OFF} $prompt [${C_DIM}<hidden>${C_OFF}${default:+ ($default)}] ")" answer
-    echo
-  else
-    read -r -p "$(echo -e "${C_BLU}?${C_OFF} $prompt [${default}] ")" answer
+  while true; do
+    local read_rc=0
+    if [[ "$secret" == "secret" ]]; then
+      printf "%s" "$(echo -e "${C_BLU}?${C_OFF} $prompt [${C_DIM}<hidden>${C_OFF}${default:+ ($default chars)}] ")" >&2 || true
+      set +e; read -r -s answer; read_rc=$?; set -e
+      echo >&2 || true
+    else
+      printf "%s" "$(echo -e "${C_BLU}?${C_OFF} $prompt [${default}] ")" >&2 || true
+      set +e; read -r answer; read_rc=$?; set -e
+    fi
+    # read_rc != 0 表示 stdin EOF（管道关闭）→ 用 default，不问 validator
+    # read_rc == 0 && 空字符串 = 用户空回车 → 走 validator
+    if [[ $read_rc -ne 0 ]]; then
+      echo "$default"
+      return 0
+    fi
+    answer="${answer:-$default}"
+    if [[ -n "$validator" ]]; then
+      if err_msg=$("$validator" "$answer" 2>&1); then
+        echo "$answer"
+        return 0
+      else
+        warn "输入无效: $err_msg（按 Ctrl-C 退出）"
+        continue
+      fi
+    else
+      echo "$answer"
+      return 0
+    fi
+  done
+}
+
+prompt_choice() {
+  # 多选项菜单
+  # usage: prompt_choice "标题" "选项1" "选项2" "选项3" default_idx
+  # default_idx 是最后一个位置参数
+  # 菜单输出到 stderr，答案输出到 stdout（方便 command substitution 捕获）
+  local title="$1"
+  shift
+  local -a opts=()
+  while [[ $# -gt 1 ]]; do
+    opts+=("$1")
+    shift
+  done
+  local default_idx="${1:-1}"
+  local count=${#opts[@]}
+  local i=1
+  {
+    title "$title"
+    for opt in "${opts[@]}"; do
+      echo "  $i) $opt"
+      i=$((i+1))
+    done
+  } >&2
+  local answer
+  while true; do
+    # 先写 prompt 到 stderr（避免与 command substitution 捕获的 stdout 混淆）
+    printf "%s" "$(echo -e "${C_BLU}?${C_OFF} 选择 [$default_idx]: ")" >&2 || true
+    # 临时关 set -e：read 在 stdin EOF/SIGPIPE 时返回 1，会误触发脚本退出
+    set +e
+    read -r answer
+    set -e
+    # stdin EOF 时用默认
+    [[ -z "$answer" ]] && answer="$default_idx"
+    if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= count )); then
+      echo "$answer"
+      return 0
+    fi
+    warn "请输入 1-$count 之间的数字"
+  done
+}
+
+# ============================================================================
+# 输入校验器
+# ============================================================================
+validate_port() {
+  local val="$1"
+  if [[ ! "$val" =~ ^[0-9]+$ ]] || (( val < 1 || val > 65535 )); then
+    echo "端口必须是 1-65535 之间的整数"; return 1
   fi
-  answer="${answer:-$default}"
-  echo "$answer"
+}
+
+validate_email() {
+  local val="$1"
+  if [[ ! "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+    echo "邮箱格式不对 (例: admin@example.com)"; return 1
+  fi
+}
+
+validate_path() {
+  local val="$1"
+  [[ -z "$val" ]] && { echo "路径不能为空"; return 1; }
+  if [[ "$val" != /* ]]; then
+    echo "路径必须以 / 开头"; return 1
+  fi
+}
+
+validate_host() {
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.:-]+$ ]]; then
+    echo "格式不对 (例: root@1.2.3.4 或 deploy@cnch.example.com)"; return 1
+  fi
+}
+
+validate_password_strength() {
+  local val="$1"
+  if [[ ${#val} -lt 8 ]]; then
+    echo "密码至少 8 位"; return 1
+  fi
 }
 
 # ============================================================================
@@ -346,118 +451,34 @@ wizard_init() {
   echo -e "${C_DIM}回车用默认值；Ctrl-C 随时退出${C_OFF}"
   hr
 
-  # 1) 部署位置
-  if [[ "$MODE" != "express" ]]; then
-    if [[ -z "$LOCATION" || "$LOCATION" == "local" ]]; then
-      echo "部署位置:"
-      echo "  1) 本机（已经在这台机器上，默认）"
-      echo "  2) 远程机器（需要 SSH）"
-      local loc_choice
-      read -r -p "$(echo -e "${C_BLU}?${C_OFF} 选择 [1]: ")" loc_choice
-      loc_choice="${loc_choice:-1}"
-      if [[ "$loc_choice" == "2" ]]; then
-        LOCATION="remote"
-      fi
-    fi
-
-    # 远程模式额外问
-    if [[ "$LOCATION" == "remote" && -z "$SSH_HOST" ]]; then
-      SSH_HOST=$(prompt_value "目标主机 (user@host)" "root@")
-      [[ -z "$SSH_HOST" || "$SSH_HOST" == "root@" ]] && { err "必须提供 host"; exit 1; }
-      SSH_PORT=$(prompt_value "SSH 端口" "$SSH_PORT")
-      if [[ -f "$SSH_KEY" ]]; then
-        if ! confirm "用现成 SSH 密钥 $SSH_KEY ?" "y"; then
-          SSH_KEY=$(prompt_value "SSH 私钥路径" "$HOME/.ssh/id_ed25519")
-        fi
-      else
-        SSH_KEY=$(prompt_value "SSH 私钥路径" "$HOME/.ssh/id_ed25519")
-        if [[ ! -f "$SSH_KEY" ]]; then
-          warn "密钥不存在，切换到密码模式"
-          SSH_USE_PASSWORD=1
-        fi
-      fi
-      if [[ $SSH_USE_PASSWORD -eq 1 ]]; then
-        read -r -s -p "$(echo -e "${C_BLU}?${C_OFF} SSH 密码: ")" REMOTE_SSH_PASS
-        echo
-        [[ -z "$REMOTE_SSH_PASS" ]] && { err "密码不能为空"; exit 1; }
-      fi
-    fi
-  fi
-
-  # 2) 核心参数
-  if [[ "$MODE" == "expert" ]]; then
-    HTTP_PORT=$(prompt_value "Caddy HTTP 端口" "${HTTP_PORT:-$CNCH_HTTP_PORT_DEFAULT}")
-    DATA_DIR=$(prompt_value "数据目录" "${DATA_DIR:-$CNCH_DATA_DIR_DEFAULT}")
-    CACHE_DIR=$(prompt_value "缓存目录" "${CACHE_DIR:-$CNCH_CACHE_DIR_DEFAULT}")
+  # ============= 入口菜单：默认 vs 自定义 vs 完全专家 =============
+  local main_choice
+  if [[ "$MODE" == "express" ]]; then
+    main_choice="1"   # express 模式直接走默认
+  elif [[ "$MODE" == "expert" ]]; then
+    main_choice="3"
   else
-    HTTP_PORT="${HTTP_PORT:-$CNCH_HTTP_PORT_DEFAULT}"
-    DATA_DIR="${DATA_DIR:-$CNCH_DATA_DIR_DEFAULT}"
-    CACHE_DIR="${CACHE_DIR:-$CNCH_CACHE_DIR_DEFAULT}"
+    # interactive
+    main_choice=$(prompt_choice "选择部署方式" \
+      "一键默认（用所有默认值 + 随机管理员密码）" \
+      "自定义（我改几个参数）" \
+      "完全专家（暴露所有参数）" \
+      1)
   fi
 
-  # 3) 管理员密码
-  if [[ -z "$ADMIN_PASSWORD" ]]; then
-    if [[ "$MODE" == "express" ]]; then
-      ADMIN_PASSWORD=$(gen_password)
-      log "随机生成管理员密码: ${C_BLD}${ADMIN_PASSWORD}${C_OFF}"
-    else
-      echo
-      echo "管理员密码（首次登录用,以后可在控制台修改）:"
-      local p1 p2
-      while true; do
-        read -r -s -p "$(echo -e "${C_BLU}?${C_OFF} 密码 [留空=随机生成]: ")" p1
-        echo
-        if [[ -z "$p1" ]]; then
-          ADMIN_PASSWORD=$(gen_password)
-          log "随机生成密码: ${C_BLD}${ADMIN_PASSWORD}${C_OFF}"
-          break
-        fi
-        read -r -s -p "$(echo -e "${C_BLU}?${C_OFF} 再次输入: ")" p2
-        echo
-        if [[ "$p1" == "$p2" ]]; then
-          ADMIN_PASSWORD="$p1"
-          break
-        fi
-        warn "两次密码不一致，重新输入"
-      done
-    fi
-  fi
+  case "$main_choice" in
+    1)  # 一键默认 — 只确认两件事：本地还是远程 + 密码是否随机
+       wizard_minimal
+       ;;
+    2)  # 自定义 — 分组菜单驱动
+       wizard_custom
+       ;;
+    3)  # 完全专家 — 一个个问所有
+       wizard_expert
+       ;;
+  esac
 
-  # 4) TLS（仅 expert）
-  if [[ "$MODE" == "expert" ]]; then
-    echo
-    echo "TLS 模式:"
-    echo "  1) off (默认 — HTTP only, 适合测试/内网)"
-    echo "  2) self-signed (自签证书, 浏览器会警告)"
-    echo "  3) letsencrypt (需要公网域名 + 80/443 可达)"
-    local tls_choice
-    read -r -p "$(echo -e "${C_BLU}?${C_OFF} 选择 [1]: ")" tls_choice
-    tls_choice="${tls_choice:-1}"
-    case "$tls_choice" in
-      2) TLS_MODE="self-signed" ;;
-      3) TLS_MODE="letsencrypt"
-         DOMAIN=$(prompt_value "域名" "${DOMAIN:-}")
-         ADMIN_EMAIL=$(prompt_value "证书注册邮箱" "${ADMIN_EMAIL:-}")
-         [[ -z "$DOMAIN" || -z "$ADMIN_EMAIL" ]] && { err "letsencrypt 需要域名+邮箱"; exit 1; }
-         ;;
-      *) TLS_MODE="off" ;;
-    esac
-  else
-    TLS_MODE="${TLS_MODE:-$CNCH_TLS_MODE_DEFAULT}"
-  fi
-
-  # 5) 高级（仅 expert）
-  if [[ "$MODE" == "expert" ]]; then
-    SMALL_VPS_OPT=$(prompt_value "小VPS优化 (true|false)" "${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}")
-    REGISTRY_MIRROR=$(prompt_value "Docker registry 镜像 (auto|off|<url>)" "${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}")
-    PUBLIC_BASE_URL=$(prompt_value "公开 Base URL（控制台里显示给用户的访问地址）" "${PUBLIC_BASE_URL:-http://}")
-  else
-    SMALL_VPS_OPT="${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}"
-    REGISTRY_MIRROR="${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}"
-    PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
-  fi
-
-  # 6) 总结
+  # 总结
   title "📋  配置总结"
   cat <<EOF
   部署位置:    ${LOCATION}$([[ "$LOCATION" == "remote" ]] && echo " → $SSH_HOST")
@@ -475,6 +496,184 @@ EOF
     if ! confirm "开始部署?" "y"; then
       err "用户取消"
       exit 3
+    fi
+  fi
+}
+
+# 一键默认
+wizard_minimal() {
+  # 唯一的两个问题：本地/远程 + 密码要不要自己设
+  if [[ -z "$SSH_HOST" && -z "${WIZARD_SKIP_LOCATION:-}" ]]; then
+    local loc
+    loc=$(prompt_choice "部署位置" \
+      "本机（当前服务器）" \
+      "远程服务器（需要 SSH）" \
+      1)
+    [[ "$loc" == "2" ]] && LOCATION="remote"
+  fi
+  if [[ "$LOCATION" == "remote" ]]; then
+    wizard_ask_ssh
+  fi
+  HTTP_PORT="${HTTP_PORT:-$CNCH_HTTP_PORT_DEFAULT}"
+  DATA_DIR="${DATA_DIR:-$CNCH_DATA_DIR_DEFAULT}"
+  CACHE_DIR="${CACHE_DIR:-$CNCH_CACHE_DIR_DEFAULT}"
+  TLS_MODE="${TLS_MODE:-$CNCH_TLS_MODE_DEFAULT}"
+  SMALL_VPS_OPT="${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}"
+  REGISTRY_MIRROR="${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}"
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
+  # minimal: 一键默认直接用随机密码，不再问"自己设还是随机"
+  if [[ -z "$ADMIN_PASSWORD" ]]; then
+    ADMIN_PASSWORD=$(gen_password)
+    log "随机生成管理员密码: ${C_BLD}${ADMIN_PASSWORD}${C_OFF}"
+  fi
+}
+
+# 自定义 — 分组菜单，按需进入
+wizard_custom() {
+  if [[ -z "$SSH_HOST" && -z "${WIZARD_SKIP_LOCATION:-}" ]]; then
+    local loc
+    loc=$(prompt_choice "部署位置" "本机" "远程 SSH" 1)
+    [[ "$loc" == "2" ]] && LOCATION="remote"
+  fi
+  if [[ "$LOCATION" == "remote" ]]; then
+    wizard_ask_ssh
+  fi
+  # 默认值
+  HTTP_PORT="${HTTP_PORT:-$CNCH_HTTP_PORT_DEFAULT}"
+  DATA_DIR="${DATA_DIR:-$CNCH_DATA_DIR_DEFAULT}"
+  CACHE_DIR="${CACHE_DIR:-$CNCH_CACHE_DIR_DEFAULT}"
+  TLS_MODE="${TLS_MODE:-$CNCH_TLS_MODE_DEFAULT}"
+  SMALL_VPS_OPT="${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}"
+  REGISTRY_MIRROR="${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}"
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
+  # 问密码（如果还没设）
+  wizard_ask_password
+
+  # 分组菜单
+  while true; do
+    hr
+    echo "  当前配置（回车直接开始部署，选数字改具体项）:"
+    printf "   ${C_DIM}[1]${C_OFF} 端口:        %s\n" "$HTTP_PORT"
+    printf "   ${C_DIM}[2]${C_OFF} 数据目录:    %s\n" "$DATA_DIR"
+    printf "   ${C_DIM}[3]${C_OFF} 缓存目录:    %s\n" "$CACHE_DIR"
+    printf "   ${C_DIM}[4]${C_OFF} TLS 模式:    %s\n" "$TLS_MODE"
+    printf "   ${C_DIM}[5]${C_OFF} 管理员密码:  %s*** (${#ADMIN_PASSWORD} 字符)\n" "${ADMIN_PASSWORD:0:4}"
+    printf "   ${C_DIM}[6]${C_OFF} 小VPS优化:   %s\n" "$SMALL_VPS_OPT"
+    printf "   ${C_DIM}[7]${C_OFF} Registry:    %s\n" "$REGISTRY_MIRROR"
+    printf "   ${C_DIM}[8]${C_OFF} 公开 URL:    %s\n" "${PUBLIC_BASE_URL:-<未设置>}"
+    echo
+    printf "   ${C_GRN}[c]${C_OFF} 继续 (用当前配置开始部署)\n"
+    printf "   ${C_RED}[q]${C_OFF} 退出\n"
+    echo
+    local action
+    printf "%s" "$(echo -e "${C_BLU}?${C_OFF} 操作 [c]: ")" >&2 || true
+    set +e; read -r action; set -e
+    action="${action:-c}"
+    case "$action" in
+      1) HTTP_PORT=$(prompt_value "Caddy HTTP 端口" "$HTTP_PORT" "" "validate_port") ;;
+      2) DATA_DIR=$(prompt_value "数据目录" "$DATA_DIR" "" "validate_path") ;;
+      3) CACHE_DIR=$(prompt_value "缓存目录" "$CACHE_DIR" "" "validate_path") ;;
+      4) wizard_ask_tls ;;
+      5) wizard_ask_password ;;
+      6) SMALL_VPS_OPT=$(prompt_value "小VPS优化 (true|false)" "$SMALL_VPS_OPT") ;;
+      7) REGISTRY_MIRROR=$(prompt_value "Docker registry 镜像 (auto|off|<url>)" "$REGISTRY_MIRROR") ;;
+      8) PUBLIC_BASE_URL=$(prompt_value "公开 Base URL（用户从外部访问 CNCH 的地址）" "$PUBLIC_BASE_URL") ;;
+      c|C) break ;;
+      q|Q) err "用户取消"; exit 3 ;;
+      *) warn "未知操作: $action" ;;
+    esac
+  done
+}
+
+# 完全专家 — 问完所有项
+wizard_expert() {
+  if [[ -z "$SSH_HOST" && -z "${WIZARD_SKIP_LOCATION:-}" ]]; then
+    local loc
+    loc=$(prompt_choice "部署位置" "本机" "远程 SSH" 1)
+    [[ "$loc" == "2" ]] && LOCATION="remote"
+  fi
+  if [[ "$LOCATION" == "remote" ]]; then
+    wizard_ask_ssh
+  fi
+  HTTP_PORT=$(prompt_value "Caddy HTTP 端口" "${HTTP_PORT:-$CNCH_HTTP_PORT_DEFAULT}" "" "validate_port")
+  DATA_DIR=$(prompt_value "数据目录" "${DATA_DIR:-$CNCH_DATA_DIR_DEFAULT}" "" "validate_path")
+  CACHE_DIR=$(prompt_value "缓存目录" "${CACHE_DIR:-$CNCH_CACHE_DIR_DEFAULT}" "" "validate_path")
+  wizard_ask_tls
+  wizard_ask_password
+  SMALL_VPS_OPT=$(prompt_value "小VPS优化 (true|false)" "${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}")
+  REGISTRY_MIRROR=$(prompt_value "Docker registry 镜像 (auto|off|<url>)" "${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}")
+  PUBLIC_BASE_URL=$(prompt_value "公开 Base URL" "${PUBLIC_BASE_URL:-http://}")
+}
+
+# 共享：问 SSH 信息
+wizard_ask_ssh() {
+  if [[ -z "$SSH_HOST" ]]; then
+    SSH_HOST=$(prompt_value "目标主机 (user@host)" "root@" "" "validate_host")
+  fi
+  SSH_PORT=$(prompt_value "SSH 端口" "$SSH_PORT" "" "validate_port")
+  if [[ -f "$SSH_KEY" && -z "${WIZARD_SKIP_KEY:-}" ]]; then
+    if ! confirm "用现成 SSH 密钥 $SSH_KEY ?" "y"; then
+      SSH_KEY=$(prompt_value "SSH 私钥路径" "$HOME/.ssh/id_ed25519")
+    fi
+  elif [[ -z "${WIZARD_SKIP_KEY:-}" ]]; then
+    SSH_KEY=$(prompt_value "SSH 私钥路径" "$HOME/.ssh/id_ed25519")
+  fi
+  if [[ ! -f "$SSH_KEY" ]]; then
+    warn "密钥不存在: $SSH_KEY — 切换到密码模式"
+    SSH_USE_PASSWORD=1
+  fi
+  if [[ $SSH_USE_PASSWORD -eq 1 ]]; then
+    REMOTE_SSH_PASS=$(prompt_value "SSH 密码" "" "secret")
+  fi
+}
+
+# 共享：问 TLS
+wizard_ask_tls() {
+  local choice
+  choice=$(prompt_choice "TLS 模式" \
+    "off (HTTP only, 测试/内网)" \
+    "self-signed (自签证书, 浏览器警告)" \
+    "letsencrypt (需要公网域名)" \
+    1)
+  case "$choice" in
+    1) TLS_MODE="off" ;;
+    2) TLS_MODE="self-signed" ;;
+    3) TLS_MODE="letsencrypt"
+       DOMAIN=$(prompt_value "域名" "${DOMAIN:-}")
+       ADMIN_EMAIL=$(prompt_value "证书注册邮箱" "${ADMIN_EMAIL:-}" "" "validate_email")
+       if [[ -z "$DOMAIN" ]]; then
+         warn "letsencrypt 需要域名 — 改回 off"
+         TLS_MODE="off"
+       fi
+       ;;
+  esac
+}
+
+# 共享：问管理员密码
+wizard_ask_password() {
+  if [[ -n "$ADMIN_PASSWORD" ]] && confirm "已设密码 ${ADMIN_PASSWORD:0:4}***，要改吗?" "n"; then
+    ADMIN_PASSWORD=""
+  fi
+  if [[ -z "$ADMIN_PASSWORD" ]]; then
+    if [[ "$MODE" == "express" ]]; then
+      ADMIN_PASSWORD=$(gen_password)
+      log "随机生成管理员密码: ${C_BLD}${ADMIN_PASSWORD}${C_OFF}"
+    else
+      local p1 p2
+      while true; do
+        p1=$(prompt_value "管理员密码 (留空=随机, ≥8 字符)" "" "secret" "validate_password_strength")
+        if [[ -z "$p1" ]]; then
+          ADMIN_PASSWORD=$(gen_password)
+          log "随机生成密码: ${C_BLD}${ADMIN_PASSWORD}${C_OFF}"
+          break
+        fi
+        p2=$(prompt_value "再次输入确认" "" "secret")
+        if [[ "$p1" == "$p2" ]]; then
+          ADMIN_PASSWORD="$p1"
+          break
+        fi
+        warn "两次密码不一致，重新输入"
+      done
     fi
   fi
 }

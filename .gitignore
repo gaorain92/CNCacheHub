@@ -30,10 +30,7 @@ coverage/
 .vite/
 
 # 部署生成文件（脚本会重新生成，含敏感信息如 ADMIN_PASSWORD）
-deploy/.env
 deploy/generated/
-deploy/Caddyfile.generated
-deploy/docker-compose.generated.yml
 
 # Go
 server/bin/
