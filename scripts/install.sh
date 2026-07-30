@@ -235,17 +235,252 @@ check_local_deps() {
     return 0
   fi
   local missing=0
-  for cmd in docker curl; do
+  for cmd in curl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       err "缺少依赖: $cmd"
       missing=1
     fi
   done
-  if ! docker info >/dev/null 2>&1; then
-    err "Docker 守护进程没跑或没权限（试试: sudo usermod -aG docker \$USER）"
+  # docker 是必需的；缺了的话下面 offer_install_docker 会处理
+  if ! command -v docker >/dev/null 2>&1; then
+    err "缺少依赖: docker"
+    missing=1
+  elif ! docker info >/dev/null 2>&1; then
+    err "Docker 守护进程没跑或没权限（试试: sudo usermod -aG docker \$USER && newgrp docker）"
     missing=1
   fi
   return $missing
+}
+
+# ============================================================================
+# Linux 发行版识别 — 5 大族：apt / dnf / yum / pacman / apk
+# ============================================================================
+# 解析 /etc/os-release，把 (id, family) 写到全局变量 DETECTED_DISTRO / PKG_FAMILY
+# 不支持 macOS（BSD 工具链，Docker 走 Docker Desktop 不在这条路径）
+DETECTED_DISTRO=""
+PKG_FAMILY=""
+
+detect_distro() {
+  # macOS 走 brew，不在这里处理
+  if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    DETECTED_DISTRO="macos"
+    PKG_FAMILY="brew"
+    return 0
+  fi
+  # 没有 /etc/os-release 的非 Linux 系统
+  if [[ ! -f /etc/os-release ]]; then
+    DETECTED_DISTRO="unknown"
+    PKG_FAMILY="unknown"
+    return 1
+  fi
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  DETECTED_DISTRO="${ID:-unknown}"
+  case "$ID" in
+    # apt 族
+    debian|ubuntu|linuxmint|elementary|pop|raspbian|kali|neon|zorin)
+      PKG_FAMILY="apt" ;;
+    # dnf 族（Fedora / RHEL 9+ / Alma / Rocky / CentOS Stream 9+）
+    fedora|rhel|rocky|almalinux|centos|nobara|openmandriva)
+      PKG_FAMILY="dnf" ;;
+    # yum 族（CentOS 7 / RHEL 7 / Oracle Linux 7 / Amazon Linux 2）
+    ol|amzn|centos-stream|rhel-7|cloudlinux|scientific)
+      PKG_FAMILY="yum" ;;
+    # pacman 族
+    arch|manjaro|endeavouros|arcolinux|garuda)
+      PKG_FAMILY="pacman" ;;
+    # apk 族（Alpine）
+    alpine)
+      PKG_FAMILY="apk" ;;
+    # openSUSE / SUSE
+    opensuse*|sles|suse)
+      PKG_FAMILY="zypper" ;;
+    *)
+      # 兜底 — 看哪个命令在
+      if command -v apt-get >/dev/null 2>&1; then PKG_FAMILY="apt"
+      elif command -v dnf >/dev/null 2>&1; then PKG_FAMILY="dnf"
+      elif command -v yum >/dev/null 2>&1; then PKG_FAMILY="yum"
+      elif command -v pacman >/dev/null 2>&1; then PKG_FAMILY="pacman"
+      elif command -v apk >/dev/null 2>&1; then PKG_FAMILY="apk"
+      else PKG_FAMILY="unknown"
+      fi
+      ;;
+  esac
+  log "检测到系统: ${C_BLD}${DETECTED_DISTRO}${C_OFF} (${PRETTY_NAME:-$ID}) → 包管理器: ${C_BLD}${PKG_FAMILY}${C_OFF}"
+  return 0
+}
+
+# 跨发行版装 docker（缺哪个装哪个）
+# 必须在 detect_distro 之后调
+install_docker() {
+  local pm="$PKG_FAMILY"
+  log "尝试用 ${pm} 装 docker..."
+  case "$pm" in
+    apt)
+      # Debian / Ubuntu 官方仓库的 docker.io 比 docker-ce 简单，单 VPS 够用
+      run sudo apt-get update
+      run sudo apt-get install -y docker.io
+      ;;
+    dnf)
+      # Fedora / RHEL 9+ / Alma 9+ — dnf-plugins 装 docker-ce 仓库麻烦
+      # 直接用发行版自带的 moby-engine（Fedora） 或 podman 替代
+      # Fedora 仓库里有 docker 本身（Fedora 39+）
+      run sudo dnf install -y docker docker-compose
+      ;;
+    yum)
+      # RHEL 7 / CentOS 7 / Amazon Linux 2 — 装 docker 走 extras 仓库
+      run sudo yum install -y yum-utils
+      run sudo yum install -y docker
+      ;;
+    pacman)
+      # Arch / Manjaro
+      run sudo pacman -Sy --noconfirm docker docker-compose
+      ;;
+    apk)
+      # Alpine
+      run sudo apk add --no-cache docker docker-compose
+      ;;
+    zypper)
+      # openSUSE
+      run sudo zypper --non-interactive install docker docker-compose
+      ;;
+    *)
+      err "不支持的发行版: ${DETECTED_DISTRO} (${pm})。请手动装 docker 后再跑 install.sh"
+      return 1
+      ;;
+  esac
+  # 启动 + 开机自启（systemd 是绝大多数发行版的 init；Alpine 用 OpenRC 单独处理）
+  if command -v systemctl >/dev/null 2>&1; then
+    run sudo systemctl enable --now docker
+  elif command -v rc-update >/dev/null 2>&1 && [[ "$PKG_FAMILY" == "apk" ]]; then
+    run sudo rc-update add docker boot
+    run sudo service docker start
+  fi
+  # 当前用户加入 docker 组（避免每次 sudo）
+  local user_name
+  user_name="${SUDO_USER:-${USER:-root}}"
+  if [[ "$user_name" != "root" ]]; then
+    run sudo usermod -aG docker "$user_name"
+    warn "已把 $user_name 加入 docker 组 — 重新登录或 newgrp docker 生效"
+  fi
+  ok "docker 装好，验证一下..."
+  if ! docker info >/dev/null 2>&1; then
+    err "docker 装上了但 daemon 没起来 — 手动 systemctl status docker 看下"
+    return 1
+  fi
+  ok "docker daemon OK"
+}
+
+# 检查并尝试装 docker（交互 / express 都走同一条路）
+offer_install_docker() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "[dry-run] 跳过 docker 安装"
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  # 没装 / 没起
+  detect_distro
+  if [[ -z "$PKG_FAMILY" || "$PKG_FAMILY" == "unknown" || "$PKG_FAMILY" == "brew" ]]; then
+    err "没装 docker，且无法自动识别发行版。请先手动装 docker 后再跑。brew: brew install --cask docker"
+    return 1
+  fi
+  if [[ "$MODE" == "express" ]]; then
+    log "express 模式：自动装 docker..."
+    install_docker
+    return $?
+  fi
+  if confirm "检测到没装 docker — 用 ${PKG_FAMILY} 装吗?" "y"; then
+    install_docker
+    return $?
+  fi
+  err "需要 docker 才能继续 — 装上再重跑"
+  return 1
+}
+
+# ============================================================================
+# 远程版本的 detect / install（走 remote_or_local 包 SSH）
+# 输出到 REMOTE_PKG_FAMILY / REMOTE_DISTRO
+# ============================================================================
+REMOTE_PKG_FAMILY=""
+REMOTE_DISTRO=""
+
+detect_distro_remote() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    REMOTE_DISTRO="dry-run"
+    REMOTE_PKG_FAMILY="apt"
+    return 0
+  fi
+  # 取 ID 和 ID_LIKE
+  local info
+  info=$(remote_or_local 'cat /etc/os-release 2>/dev/null | grep -E "^(ID|ID_LIKE)=" || true')
+  if [[ -z "$info" ]]; then
+    REMOTE_DISTRO="unknown"
+    REMOTE_PKG_FAMILY="unknown"
+    return 1
+  fi
+  REMOTE_DISTRO=$(echo "$info" | grep '^ID=' | head -1 | cut -d'=' -f2 | tr -d '"')
+  # 判断包管理器
+  if remote_or_local "command -v apt-get >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="apt"
+  elif remote_or_local "command -v dnf >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="dnf"
+  elif remote_or_local "command -v yum >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="yum"
+  elif remote_or_local "command -v pacman >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="pacman"
+  elif remote_or_local "command -v apk >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="apk"
+  elif remote_or_local "command -v zypper >/dev/null 2>&1"; then
+    REMOTE_PKG_FAMILY="zypper"
+  else
+    REMOTE_PKG_FAMILY="unknown"
+  fi
+  log "远程系统: ${C_BLD}${REMOTE_DISTRO}${C_OFF} → 包管理器: ${C_BLD}${REMOTE_PKG_FAMILY}${C_OFF}"
+  return 0
+}
+
+install_docker_remote() {
+  # 在远程机器上装 docker（与 install_docker 镜像，但走 remote_or_local）
+  local pm="$REMOTE_PKG_FAMILY"
+  case "$pm" in
+    apt)
+      run remote_or_local "sudo apt-get update && sudo apt-get install -y docker.io"
+      ;;
+    dnf)
+      run remote_or_local "sudo dnf install -y docker docker-compose"
+      ;;
+    yum)
+      run remote_or_local "sudo yum install -y yum-utils && sudo yum install -y docker"
+      ;;
+    pacman)
+      run remote_or_local "sudo pacman -Sy --noconfirm docker docker-compose"
+      ;;
+    apk)
+      run remote_or_local "sudo apk add --no-cache docker docker-compose"
+      ;;
+    zypper)
+      run remote_or_local "sudo zypper --non-interactive install docker docker-compose"
+      ;;
+    *)
+      err "不支持的远程发行版: ${REMOTE_DISTRO} (${pm}) — 手动装 docker 后重跑"
+      return 1
+      ;;
+  esac
+  # 启动 daemon
+  if remote_or_local "command -v systemctl >/dev/null 2>&1"; then
+    run remote_or_local "sudo systemctl enable --now docker"
+  elif [[ "$pm" == "apk" ]]; then
+    run remote_or_local "sudo rc-update add docker boot && sudo service docker start"
+  fi
+  # 验证
+  if remote_or_local "docker info >/dev/null 2>&1"; then
+    ok "远程 docker daemon OK"
+    return 0
+  fi
+  err "远程 docker 装上了但 daemon 没起来 — 手动 systemctl status docker 看下"
+  return 1
 }
 
 # 远程执行封装 — local 模式直接跑，remote 模式 ssh 过去
@@ -387,18 +622,53 @@ validate_port() {
   fi
 }
 
-validate_email() {
-  local val="$1"
-  if [[ ! "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
-    echo "邮箱格式不对 (例: admin@example.com)"; return 1
-  fi
-}
-
+# 路径必须在白名单前缀下（防 rm -rf /etc / 之类）
 validate_path() {
   local val="$1"
   [[ -z "$val" ]] && { echo "路径不能为空"; return 1; }
   if [[ "$val" != /* ]]; then
     echo "路径必须以 / 开头"; return 1
+  fi
+  # 根路径
+  if [[ "$val" == "/" ]]; then
+    echo "禁止使用根路径 (/)"; return 1
+  fi
+  # 系统关键目录（前缀匹配）— /var 单独处理
+  local prefix
+  for prefix in /bin /sbin /usr /etc /boot /proc /sys /dev /root /lib /lib64 /lib32 /sbin; do
+    if [[ "$val" == "$prefix" || "$val" == "$prefix/"* ]]; then
+      echo "禁止使用系统目录 ($val) — 选 /opt /srv /home 或 /var/lib 之类"; return 1
+    fi
+  done
+  # /var 子目录只允许 lib（其他是 log/run/tmp/lock/cache 等系统用途）
+  if [[ "$val" == "/var" || "$val" == "/var/"* ]]; then
+    if [[ "$val" != "/var/lib" && "$val" != "/var/lib/"* ]]; then
+      echo "禁止使用 /var 系统子目录 ($val) — /var/lib 之外都是系统用途"
+      return 1
+    fi
+  fi
+  # 临时 / 内存文件系统（前缀匹配）
+  for prefix in /tmp /var/tmp /run /dev/shm; do
+    if [[ "$val" == "$prefix" || "$val" == "$prefix/"* ]]; then
+      echo "禁止使用临时目录 ($val) — 容器重启会丢"; return 1
+    fi
+  done
+  # 路径中不能有 . 或 .. 段（防 path traversal）
+  if [[ "$val" =~ (^|/)\.\.?(/|$) ]]; then
+    echo "路径包含 . 或 .. 相对引用"; return 1
+  fi
+  # 路径至少 2 层（防 /a）
+  local depth
+  depth=$(echo "$val" | tr '/' '\n' | grep -cv '^$' || true)
+  if (( depth < 2 )); then
+    echo "路径至少 2 层 (例: /var/lib/cncachehub)"; return 1
+  fi
+}
+
+validate_email() {
+  local val="$1"
+  if [[ ! "$val" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+    echo "邮箱格式不对 (例: admin@example.com)"; return 1
   fi
 }
 
@@ -440,6 +710,37 @@ check_remote_deps() {
     missing=1
   fi
   return $missing
+}
+
+# 早期校验：CLI 直接传的参数也要走 validator（不依赖 wizard 的 prompt_value）
+validate_cli_args() {
+  local fail=0
+  _check() {
+    local name="$1" validator="$2" val="$3"
+    if ! "$validator" "$val" >/dev/null 2>&1; then
+      err "--$name 不合法: $val"
+      "$validator" "$val" >&2 || true
+      return 1
+    fi
+    return 0
+  }
+  # 注意：必须用 if，不能用 [[ -n X ]] && _check ... || fail=1
+  # 否则空 X 走 || 直接 fail=1
+  if [[ -n "$DATA_DIR" ]];       then _check data-dir       validate_path "$DATA_DIR"       || fail=1; fi
+  if [[ -n "$CACHE_DIR" ]];      then _check cache-dir      validate_path "$CACHE_DIR"      || fail=1; fi
+  if [[ -n "$HTTP_PORT" ]];      then _check http-port      validate_port  "$HTTP_PORT"     || fail=1; fi
+  if [[ -n "$SSH_HOST" ]];       then _check host           validate_host  "$SSH_HOST"      || fail=1; fi
+  if [[ -n "$SSH_PORT" ]];       then _check ssh-port       validate_port  "$SSH_PORT"      || fail=1; fi
+  if [[ -n "$ADMIN_EMAIL" ]];    then _check admin-email    validate_email "$ADMIN_EMAIL"   || fail=1; fi
+  if [[ -n "$ADMIN_PASSWORD" ]]; then _check admin-password validate_password_strength "$ADMIN_PASSWORD" || fail=1; fi
+  # domain 单独校验（没有 validator 函数）
+  if [[ -n "$DOMAIN" ]]; then
+    if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$ ]]; then
+      err "--domain 不合法: $DOMAIN (例: cache.example.com)"
+      fail=1
+    fi
+  fi
+  return $fail
 }
 
 # ============================================================================
@@ -739,6 +1040,13 @@ generate_compose() {
 
   cat > "$compose" <<EOF
 # 由 install.sh 生成 — 不要手工改，用 install.sh update 重生
+# 加固项详见 docs/security.md：
+#   - cap_drop ALL + 最小 cap_add
+#   - no-new-privileges
+#   - mem_limit / pids_limit
+#   - read_only + tmpfs（server/web）
+#   - 不用 host 网络
+
 services:
   server:
     build:
@@ -751,20 +1059,48 @@ services:
     environment:
       - CNCH_DATA_DIR=/var/lib/cncachehub
       - CNCH_CACHE_DIR=/var/lib/cncachehub/cache
+      - CNCH_LOG_DIR=/var/log/cncachehub
       - CNCH_HTTP_ADDR=:${CNCH_DASHBOARD_PORT_DEFAULT}
       - CNCH_LOG_LEVEL=\${CNCH_LOG_LEVEL:-info}
       - CNCH_ADMIN_PASSWORD=\${ADMIN_PASSWORD}
       - CNCH_SMALL_VPS_OPT=\${SMALL_VPS_OPT:-true}
+      - CNCH_RESERVE_SPACE_GB=\${RESERVE_SPACE_GB:-5}
+      - CNCH_MAX_OBJECT_SIZE_MB=\${MAX_OBJECT_SIZE_MB:-1024}
+      - CNCH_CACHE_TOTAL_GB=\${CACHE_TOTAL_GB:-20}
       - CNCH_PUBLIC_BASE_URL=\${PUBLIC_BASE_URL:-}
       - TZ=\${TZ:-UTC}
     volumes:
       - cncachehub_data:/var/lib/cncachehub
       - cncachehub_cache:/var/lib/cncachehub/cache
+    # === SECURITY HARDENING ===
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/log:size=100M,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 200
+    shm_size: 64m
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:${CNCH_DASHBOARD_PORT_DEFAULT}/healthz"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:${CNCH_DASHBOARD_PORT_DEFAULT}/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 30s
 
   web:
     build:
@@ -774,11 +1110,31 @@ services:
     restart: unless-stopped
     expose:
       - "80"
+    # === SECURITY HARDENING ===
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=50M
+      - /var/run:size=10M
+      - /tmp:size=20M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 50
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
 
   caddy:
     image: caddy:2-alpine
@@ -790,6 +1146,21 @@ $([[ "$TLS_MODE" == "letsencrypt" ]] && echo "      - \"80:80\"" && echo "      
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # === SECURITY HARDENING ===
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 100
     depends_on:
       server:
         condition: service_healthy
@@ -801,6 +1172,10 @@ volumes:
   cncachehub_cache:
   caddy_data:
   caddy_config:
+
+networks:
+  default:
+    driver: bridge
 EOF
   ok "已生成 $compose"
 }
@@ -808,39 +1183,67 @@ EOF
 generate_caddyfile() {
   mkdir -p "$GENERATED_DIR"
   local caddyfile="$GENERATED_DIR/Caddyfile"
+  local DASH_PORT="${CNCH_DASHBOARD_PORT_DEFAULT:-8080}"
+  # 共享的 /metrics IP 白名单 + 安全头段（双引号以便 ${DASH_PORT} 展开）
+  local metrics_block="
+    @metrics path /metrics
+    @internal_net remote_ip 127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    handle @metrics {
+        handle @internal_net {
+            reverse_proxy server:${DASH_PORT}
+        }
+        respond \"Not Found\" 404
+    }"
+  local common_headers='X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src '\''self'\''; img-src '\''self'\'' data:; style-src '\''self'\'' '\''unsafe-inline'\''; script-src '\''self'\''"
+        -Server'
+
   case "$TLS_MODE" in
     off|self-signed)
       cat > "$caddyfile" <<EOF
 # HTTP 模式（无域名或自签证书）
+# 由 install.sh 生成 — 详见 docs/security.md
 :80 {
-    reverse_proxy /api/* server:${CNCH_DASHBOARD_PORT_DEFAULT}
-    reverse_proxy /healthz server:${CNCH_DASHBOARD_PORT_DEFAULT}
-    reverse_proxy /metrics server:${CNCH_DASHBOARD_PORT_DEFAULT}
+    request_body {
+        max_size 100MB
+    }
+${metrics_block}
+    reverse_proxy /healthz server:${DASH_PORT}
+    reverse_proxy /api/* server:${DASH_PORT}
     reverse_proxy / web:80
     header {
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
-        -Server
+        ${common_headers}
     }
     encode gzip zstd
+    log {
+        output stdout
+    }
 }
 EOF
       ;;
     letsencrypt)
       cat > "$caddyfile" <<EOF
-# HTTPS 模式 — ${DOMAIN}
+# HTTPS 模式 — ${DOMAIN}（Let's Encrypt 自动续期）
+# 由 install.sh 生成 — 详见 docs/security.md
 ${DOMAIN} {
-    reverse_proxy /api/* server:${CNCH_DASHBOARD_PORT_DEFAULT}
-    reverse_proxy /healthz server:${CNCH_DASHBOARD_PORT_DEFAULT}
-    reverse_proxy /metrics server:${CNCH_DASHBOARD_PORT_DEFAULT}
+    request_body {
+        max_size 100MB
+    }
+${metrics_block}
+    reverse_proxy /healthz server:${DASH_PORT}
+    reverse_proxy /api/* server:${DASH_PORT}
     reverse_proxy / web:80
     header {
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
+        ${common_headers}
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        -Server
     }
     encode gzip zstd
+    log {
+        output stdout
+    }
     tls ${ADMIN_EMAIL}
 }
 EOF
@@ -894,13 +1297,35 @@ do_init() {
   # 0) 依赖检查
   log "检查依赖..."
   if [[ "$LOCATION" == "local" ]]; then
-    check_local_deps || exit 2
+    if ! check_local_deps; then
+      # docker 缺 / 没起 — 试着自动装（offer_install_docker 内部会问）
+      if ! command -v docker >/dev/null 2>&1; then
+        offer_install_docker || exit 2
+        # 装完再验一次
+        check_local_deps || exit 2
+      else
+        # docker 装了但 daemon 没起
+        err "docker 装了但 daemon 没起来 — 跑: sudo systemctl start docker"
+        exit 2
+      fi
+    fi
   else
     check_remote_deps || exit 2
     # 远程还需要目标机有 docker
     if ! remote_or_local command -v docker >/dev/null 2>&1; then
-      err "目标机器没装 docker — 先 apt install docker.io / yum install docker"
-      exit 2
+      err "目标机器没装 docker — 先装上 (apt: docker.io / dnf: docker / yum: docker)"
+      if confirm "想自动 ssh 过去装 docker 吗?" "y"; then
+        detect_distro_remote
+        if [[ -n "$REMOTE_PKG_FAMILY" && "$REMOTE_PKG_FAMILY" != "unknown" ]]; then
+          log "在 $SSH_HOST 上装 docker ($REMOTE_PKG_FAMILY)..."
+          install_docker_remote || exit 2
+        else
+          err "无法识别远程系统 — 手动装好再重跑"
+          exit 2
+        fi
+      else
+        exit 2
+      fi
     fi
   fi
 
@@ -1074,6 +1499,12 @@ main() {
     local|remote) ;;
     *) err "未知位置: $LOCATION"; exit 1 ;;
   esac
+
+  # 早期校验：CLI 传的参数也走 validator
+  if ! validate_cli_args; then
+    err "参数校验失败 — 见上面错误"
+    exit 1
+  fi
 
   # 远程模式但没给 host
   if [[ "$LOCATION" == "remote" && -z "$SSH_HOST" && "$SUBCOMMAND" != "uninstall" ]]; then

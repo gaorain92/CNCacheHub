@@ -1,18 +1,15 @@
-# CNCacheHub 生产环境 docker-compose
-# 适用：公网 IP + 无域名场景（HTTP only，Caddy 不开 TLS）
+# CNCacheHub 生产环境 docker-compose（HTTP 模板）
 #
-# 用法：
-#   ADMIN_PASSWORD=xxx docker compose up -d --build
-#   然后访问 http://your-server-ip/
+# 适用：公网 IP + 无域名场景
+# 用法：  ADMIN_PASSWORD=xxx docker compose up -d --build
+# 然后访问 http://your-server-ip/
 #
-# 服务组件：
-#   - server   Go 后端（API + 反代核心）
-#   - web      Vue 3 控制台（静态构建产物）
-#   - caddy    反向代理 + gzip + 安全头
-#
-# 数据卷：
-#   - cncachehub_data  SQLite + 配置
-#   - cncachehub_cache 缓存的 blob（大文件）
+# 加固说明（详见 docs/security.md）：
+#   - cap_drop ALL + 最小 cap_add — 容器只能做必要操作
+#   - no-new-privileges — 禁止 SUID/SGID 提权
+#   - mem_limit / pids_limit — 防止 DoS 资源耗尽
+#   - read_only + tmpfs — server/web 不可写 root fs
+#   - 不用 host 网络 — 用 user-defined bridge 默认隔离
 
 services:
   server:
@@ -38,11 +35,37 @@ services:
     volumes:
       - cncachehub_data:/var/lib/cncachehub
       - cncachehub_cache:/var/lib/cncachehub/cache
+    # === SECURITY HARDENING ===
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/log:size=100M,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # SQLite WAL/SHM 文件管理
+      - DAC_OVERRIDE   # 写 named volume（root in container）
+      - FOWNER         # chown 缓存文件
+      - SETUID
+      - SETGID
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 200
+    # 禁用新版 kernel features（避免兼容性问题）
+    shm_size: 64m
+    # 容器 ulimit
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 30s
 
   web:
     build:
@@ -52,11 +75,31 @@ services:
     restart: unless-stopped
     expose:
       - "80"
+    # === SECURITY HARDENING ===
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=50M
+      - /var/run:size=10M
+      - /tmp:size=20M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 50
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 20s
 
   caddy:
     image: caddy:2-alpine
@@ -67,6 +110,22 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
+      - caddy_config:/config
+    # === SECURITY HARDENING ===
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # 绑 80/443
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 100
     depends_on:
       server:
         condition: service_healthy
@@ -77,3 +136,14 @@ volumes:
   cncachehub_data:
   cncachehub_cache:
   caddy_data:
+  caddy_config:
+
+# === 全局网络 ===
+# 默认用 user-defined bridge — 容器间可通信但与 host 隔离
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+    # 想更严就只让 server/web/caddy 互相通，外部进不来 — 但要折腾 iptables

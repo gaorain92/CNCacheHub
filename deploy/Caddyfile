@@ -1,20 +1,52 @@
 # CNCacheHub 反代配置（HTTP 模式，无域名场景）
 # 适用：公网只有 IP，没法用 Let's Encrypt
+#
+# 安全策略（详见 docs/security.md）：
+#   - 全局 body 上限 100MB — 防恶意大文件把内存撑爆
+#   - /metrics 只允许内网访问 — 防止数据泄露
+#   - /api/* 严格安全头
+#
+# 限流（防登录爆破）由 Go server 中间件负责（Caddy:2-alpine 不带 rate_limit 模块）
 
 :80 {
-    # API 与健康检查反代到后端
-    reverse_proxy /api/* server:8080
+    # === 请求体限制（DoS 防护）===
+    request_body {
+        max_size 100MB
+    }
+
+    # === /metrics 限 IP（防止被外部抓走监控数据）===
+    @metrics path /metrics
+    @internal_net remote_ip 127.0.0.1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    handle @metrics {
+        handle @internal_net {
+            reverse_proxy server:8080
+        }
+        # 不在白名单 → 404（不告诉攻击者端点存在）
+        respond "Not Found" 404
+    }
+
+    # === /healthz 公开可访问（监控探针需要）===
     reverse_proxy /healthz server:8080
 
-    # 其它（/）反代到前端
+    # === API 反代 ===
+    reverse_proxy /api/* server:8080
+
+    # === 其它（/）反代到前端 ===
     reverse_proxy / web:80
 
-    # 安全响应头
+    # === 响应头 ===
     header {
+        # 防 clickjacking
         X-Frame-Options "SAMEORIGIN"
+        # 防 MIME sniffing
         X-Content-Type-Options "nosniff"
+        # 防 XSS（旧浏览器兼容）
         X-XSS-Protection "1; mode=block"
+        # Referer 控制
         Referrer-Policy "strict-origin-when-cross-origin"
+        # CSP — 简单默认；自己跑的话可能要松一点
+        Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+        # 隐藏 Caddy/Server 标识
         -Server
     }
 
