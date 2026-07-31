@@ -56,6 +56,14 @@ CNCH_REGISTRY_MIRROR_DEFAULT="auto"  # auto | off | <custom>
 CNCH_PUBLIC_BASE_URL_DEFAULT=""
 
 # ============================================================================
+# 子脚本：systemd 模式专用
+# ============================================================================
+if [[ -f "$SCRIPT_DIR/install-systemd.sh" ]]; then
+  # shellcheck source=install-systemd.sh
+  source "$SCRIPT_DIR/install-systemd.sh"
+fi
+
+# ============================================================================
 # 颜色 & 输出
 # ============================================================================
 if [[ -t 1 ]]; then
@@ -95,6 +103,9 @@ CNCacheHub 一键部署脚本 v${CNCH_VERSION}
 部署模式:
   --mode=MODE        interactive（默认）| express | expert
   --location=LOC     local（默认）| remote
+  --runtime=RUNTIME  docker（默认）| systemd
+                     docker   = docker compose + server/web/caddy 容器
+                     systemd  = Go 二进制 + nginx + systemd（不需要 docker）
 
 远程部署:
   --host=USER@HOST   目标主机（仅 remote 模式）
@@ -140,6 +151,7 @@ version() { echo "CNCacheHub install script v${CNCH_VERSION}"; }
 SUBCOMMAND="init"
 MODE="interactive"
 LOCATION="local"
+RUNTIME="docker"   # docker | systemd
 DRY_RUN=0
 PURGE=0
 
@@ -171,6 +183,7 @@ parse_args() {
       init|update|uninstall) SUBCOMMAND="$1"; shift ;;
       --mode=*)        MODE="${1#*=}"; shift ;;
       --location=*)    LOCATION="${1#*=}"; shift ;;
+      --runtime=*)     RUNTIME="${1#*=}"; RUNTIME_CLI_SET=1; shift ;;
       --host=*)        SSH_HOST="${1#*=}"; shift ;;
       --ssh-key=*)     SSH_KEY="${1#*=}"; shift ;;
       --ssh-port=*)    SSH_PORT="${1#*=}"; shift ;;
@@ -753,6 +766,11 @@ wizard_init() {
   hr
 
   # ============= 入口菜单：默认 vs 自定义 vs 完全专家 =============
+  # 如果不是 init 子命令，跳过 runtime 询问
+  if [[ "$SUBCOMMAND" == "init" ]]; then
+    wizard_ask_runtime
+  fi
+
   local main_choice
   if [[ "$MODE" == "express" ]]; then
     main_choice="1"   # express 模式直接走默认
@@ -782,6 +800,7 @@ wizard_init() {
   # 总结
   title "📋  配置总结"
   cat <<EOF
+  Runtime:    $RUNTIME
   部署位置:    ${LOCATION}$([[ "$LOCATION" == "remote" ]] && echo " → $SSH_HOST")
   HTTP 端口:   $HTTP_PORT$([[ "$TLS_MODE" == "letsencrypt" ]] && echo " + 443")
   数据目录:    $DATA_DIR
@@ -904,6 +923,23 @@ wizard_expert() {
   SMALL_VPS_OPT=$(prompt_value "小VPS优化 (true|false)" "${SMALL_VPS_OPT:-$CNCH_SMALL_VPS_DEFAULT}")
   REGISTRY_MIRROR=$(prompt_value "Docker registry 镜像 (auto|off|<url>)" "${REGISTRY_MIRROR:-$CNCH_REGISTRY_MIRROR_DEFAULT}")
   PUBLIC_BASE_URL=$(prompt_value "公开 Base URL" "${PUBLIC_BASE_URL:-http://}")
+}
+
+# 共享：问 runtime
+wizard_ask_runtime() {
+  # 已经在 CLI 里指定了就跳过
+  if [[ -n "${RUNTIME_CLI_SET:-}" ]]; then
+    return 0
+  fi
+  local choice
+  choice=$(prompt_choice "部署 runtime" \
+    "docker (Docker Compose — 推荐，自包含可移植)" \
+    "systemd (Go 二进制 + nginx + systemd — 不需要 docker)" \
+    1)
+  case "$choice" in
+    1) RUNTIME="docker" ;;
+    2) RUNTIME="systemd" ;;
+  esac
 }
 
 # 共享：问 SSH 信息
@@ -1294,7 +1330,13 @@ do_init() {
   title "🚀  开始部署 CNCacheHub"
   hr
 
-  # 0) 依赖检查
+  # 0) 依赖检查 — 按 runtime 分支
+  if [[ "$RUNTIME" == "systemd" ]]; then
+    install_systemd
+    return $?
+  fi
+
+  # ---- 以下是 docker runtime ----
   log "检查依赖..."
   if [[ "$LOCATION" == "local" ]]; then
     if ! check_local_deps; then
@@ -1379,7 +1421,7 @@ do_init() {
     fi
   fi
 
-  # 4) 摘要
+  # 4) 摘要 — 按 runtime 分支
   title "✅  部署完成"
   local public_url
   if [[ "$TLS_MODE" == "letsencrypt" && -n "$DOMAIN" ]]; then
@@ -1393,25 +1435,45 @@ do_init() {
   fi
 
   cat <<EOF
+  Runtime:  $RUNTIME
   控制台:  ${public_url}
   用户名:  root
   密码:    ${ADMIN_PASSWORD}
-  
+
   后续管理:
 EOF
-  if [[ "$LOCATION" == "local" ]]; then
-    cat <<EOF
+  if [[ "$RUNTIME" == "systemd" ]]; then
+    if [[ "$LOCATION" == "local" ]]; then
+      cat <<EOF
+    sudo systemctl status $CNCH_SERVICE_NAME    # 服务状态
+    sudo journalctl -u $CNCH_SERVICE_NAME -f    # 实时日志
+    sudo systemctl restart $CNCH_SERVICE_NAME   # 重启服务
+    sudo nginx -t && sudo nginx -s reload       # 重载 nginx
+    $0 update --runtime=systemd                 # 升级
+    $0 uninstall --runtime=systemd [--purge]    # 卸载
+EOF
+    else
+      cat <<EOF
+    ssh $SSH_HOST 'sudo systemctl status $CNCH_SERVICE_NAME'
+    $0 update --runtime=systemd --host=$SSH_HOST
+    $0 uninstall --runtime=systemd --host=$SSH_HOST [--purge]
+EOF
+    fi
+  else
+    if [[ "$LOCATION" == "local" ]]; then
+      cat <<EOF
     cd $GENERATED_DIR && docker compose logs -f      # 看日志
     cd $GENERATED_DIR && docker compose restart      # 重启
     $0 update --mode=express                        # 升级
     $0 uninstall [--purge]                          # 卸载
 EOF
-  else
-    cat <<EOF
+    else
+      cat <<EOF
     ssh $SSH_HOST 'cd /opt/cncachehub/deploy && sudo docker compose logs -f'
     $0 update --mode=express --host=$SSH_HOST     # 升级
     $0 uninstall --host=$SSH_HOST [--purge]       # 卸载
 EOF
+    fi
   fi
 
   # 5) 提示存密码
@@ -1422,6 +1484,20 @@ EOF
 # 执行：update
 # ============================================================================
 do_update() {
+  # systemd 模式：走 install-systemd.sh 的 update_systemd
+  if [[ "$RUNTIME" == "systemd" ]]; then
+    if [[ "$LOCATION" == "local" ]]; then
+      if [[ -d "$PROJECT_ROOT/.git" ]]; then
+        run git -C "$PROJECT_ROOT" pull --ff-only
+      fi
+    else
+      warn "remote 模式 update 不会 git pull — 请先在开发机器上 pull + 重新跑 install.sh"
+    fi
+    update_systemd
+    return $?
+  fi
+
+  # ---- 以下是 docker runtime ----
   log "拉新代码..."
   if [[ "$LOCATION" == "local" ]]; then
     if [[ -d "$PROJECT_ROOT/.git" ]]; then
@@ -1460,6 +1536,13 @@ do_update() {
 # 执行：uninstall
 # ============================================================================
 do_uninstall() {
+  # systemd 模式
+  if [[ "$RUNTIME" == "systemd" ]]; then
+    uninstall_systemd
+    return $?
+  fi
+
+  # ---- docker runtime ----
   log "停服务 + 删容器..."
   if [[ "$LOCATION" == "local" ]]; then
     cd "$GENERATED_DIR"
@@ -1498,6 +1581,10 @@ main() {
   case "$LOCATION" in
     local|remote) ;;
     *) err "未知位置: $LOCATION"; exit 1 ;;
+  esac
+  case "$RUNTIME" in
+    docker|systemd) ;;
+    *) err "未知 runtime: $RUNTIME (支持: docker | systemd)"; exit 1 ;;
   esac
 
   # 早期校验：CLI 传的参数也走 validator
