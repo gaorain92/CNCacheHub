@@ -44,7 +44,15 @@ setup_systemd_user() {
 }
 
 # 创建数据/缓存/日志目录
+# 关键：如果老 DB 已存在于其他路径（比如 /var/lib/cncachehub/cncachehub.db 而
+# 当前是 /var/lib/cncachehub/data/cncachehub.db），自动用老路径，避免覆盖丢数据
 setup_systemd_dirs() {
+  # 检测老数据布局（裸路径 vs /data 子目录）
+  local legacy_data_dir="/var/lib/cncachehub"
+  if [[ "$DATA_DIR" == "/var/lib/cncachehub/data" && -f "$legacy_data_dir/cncachehub.db" && ! -f "$DATA_DIR/cncachehub.db" ]]; then
+    warn "检测到老数据布局: $legacy_data_dir/cncachehub.db — 自动切换 DATA_DIR"
+    DATA_DIR="$legacy_data_dir"
+  fi
   # 主数据目录
   for d in "$DATA_DIR" "$CACHE_DIR" "$CNCH_LOG_DIR" "$CNCH_WEB_DIR"; do
     if [[ "$LOCATION" == "remote" ]]; then

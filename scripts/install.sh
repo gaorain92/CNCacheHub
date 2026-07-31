@@ -43,7 +43,7 @@ GENERATED_DIR="$DEPLOY_DIR/generated"
 
 CNCH_VERSION="0.1.0"
 CNCH_IMAGE_TAG="cncachehub/server:${CNCH_VERSION}"
-CNCH_DATA_DIR_DEFAULT="/var/lib/cncachehub"
+CNCH_DATA_DIR_DEFAULT="/var/lib/cncachehub/data"
 CNCH_CACHE_DIR_DEFAULT="/var/lib/cncachehub/cache"
 CNCH_HTTP_PORT_DEFAULT=80
 CNCH_DASHBOARD_PORT_DEFAULT=8080
