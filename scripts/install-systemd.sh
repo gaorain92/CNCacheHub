@@ -176,13 +176,16 @@ build_go_binary() {
     CNCH_BUILT_BINARY="$out"
     return 0
   fi
+  # 把版本 / commit 写进 binary（main.go 里有 var version / commit）
+  local ver="${CNCH_RESOLVED_VERSION:-dev}"
+  local ldflags="-s -w -X main.version=${ver} -X main.commit=${ver}"
   if [[ "$LOCATION" == "local" ]]; then
-    (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "$out" ./cmd/cncachehub)
+    (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux go build -ldflags="$ldflags" -o "$out" ./cmd/cncachehub)
   else
     # 远端：先在本地 build，再上传
-    (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "$out" ./cmd/cncachehub)
+    (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux go build -ldflags="$ldflags" -o "$out" ./cmd/cncachehub)
   fi
-  ok "build 完: $out ($(du -h "$out" | awk '{print $1}'))"
+  ok "build 完: $out ($(du -h "$out" | awk '{print $1}')) 版本=$ver"
   CNCH_BUILT_BINARY="$out"
 }
 

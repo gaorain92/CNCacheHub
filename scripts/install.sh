@@ -106,6 +106,13 @@ CNCacheHub 一键部署脚本 v${CNCH_VERSION}
   --runtime=RUNTIME  docker（默认）| systemd
                      docker   = docker compose + server/web/caddy 容器
                      systemd  = Go 二进制 + nginx + systemd（不需要 docker）
+  --source=SRC       local（默认）| git | release
+                     local   = 用 \$PROJECT_ROOT 当前源码（开发模式）
+                     git     = git fetch + checkout ref + build（保证最新 commit）
+                     release = 从 GitHub Releases 拉预编译 tarball（保证最新 release）
+  --version=VER      latest（默认）| vX.Y.Z | <git-ref>
+  --git-url=URL      自定义 git remote URL（默认用 \$PROJECT_ROOT 的 origin）
+  --release-url=URL  自定义 release 主机（默认 https://github.com/cncachehub/cncachehub/releases）
 
 远程部署:
   --host=USER@HOST   目标主机（仅 remote 模式）
@@ -155,6 +162,12 @@ RUNTIME="docker"   # docker | systemd
 DRY_RUN=0
 PURGE=0
 
+# 源码来源（怎么拿到要安装的代码 / 制品）
+SOURCE="local"     # local | git | release
+VERSION="latest"   # latest | vX.Y.Z | <git-ref>
+GIT_URL=""         # 自定义 git remote URL（默认用当前 origin）
+RELEASE_URL=""     # 自定义 release 主机（默认走 GitHub releases）
+
 # SSH 远程相关
 SSH_HOST=""
 SSH_KEY="$HOME/.ssh/id_rsa"
@@ -184,6 +197,10 @@ parse_args() {
       --mode=*)        MODE="${1#*=}"; shift ;;
       --location=*)    LOCATION="${1#*=}"; shift ;;
       --runtime=*)     RUNTIME="${1#*=}"; RUNTIME_CLI_SET=1; shift ;;
+      --source=*)      SOURCE="${1#*=}"; SOURCE_CLI_SET=1; shift ;;
+      --version=*)     VERSION="${1#*=}"; shift ;;
+      --git-url=*)     GIT_URL="${1#*=}"; shift ;;
+      --release-url=*) RELEASE_URL="${1#*=}"; shift ;;
       --host=*)        SSH_HOST="${1#*=}"; shift ;;
       --ssh-key=*)     SSH_KEY="${1#*=}"; shift ;;
       --ssh-port=*)    SSH_PORT="${1#*=}"; shift ;;
@@ -754,6 +771,151 @@ validate_cli_args() {
     fi
   fi
   return $fail
+}
+
+# ============================================================================
+# 源码解析：local / git / release — 拿到要 build/install 的源码或制品
+# 改全局 $PROJECT_ROOT 让后续 build 函数都跟着走
+# ============================================================================
+CNCH_STAGED_DIR=""   # release 模式解压后的临时目录（方便 cleanup）
+CNCH_RESOLVED_VERSION=""   # 最终确定的版本号（manifest / build tag 用）
+
+# git 模式：拉取到 $PROJECT_ROOT
+#  - 如果 $PROJECT_ROOT 已是 git repo + 有 origin → git fetch + checkout
+#  - 如果不是 git repo + 给了 GIT_URL → git clone
+#  - 都不是 → 报错
+resolve_source_git() {
+  if [[ -d "$PROJECT_ROOT/.git" ]] && git -C "$PROJECT_ROOT" remote -v 2>/dev/null | grep -q origin; then
+    log "git 模式: 已在 $PROJECT_ROOT 找到 git 仓库，fetch + checkout"
+    run git -C "$PROJECT_ROOT" fetch --tags --prune --prune-tags 2>&1 | tail -3 || true
+    local ref="$VERSION"
+    if [[ "$VERSION" == "latest" ]]; then
+      ref="HEAD"
+    fi
+    run git -C "$PROJECT_ROOT" checkout "$ref" 2>&1 | tail -2 || true
+    # 取当前 commit 短 hash 作为版本号
+    local sha
+    sha=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    CNCH_RESOLVED_VERSION="git-${sha}"
+    log "git 解析: ref=$ref → $CNCH_RESOLVED_VERSION"
+    return 0
+  fi
+  if [[ -n "$GIT_URL" ]]; then
+    log "git 模式: 当前目录不是 git 仓库，按 --git-url=$GIT_URL clone"
+    # 备份非空目录（避免覆盖）
+    local backup=""
+    if [[ -n "$(ls -A "$PROJECT_ROOT" 2>/dev/null)" && "$PROJECT_ROOT" != "/" ]]; then
+      backup="${PROJECT_ROOT}.bak.$(date +%s)"
+      warn "目标目录非空，备份到 $backup"
+      run mv "$PROJECT_ROOT" "$backup"
+      run mkdir -p "$PROJECT_ROOT"
+    fi
+    local ref=""
+    if [[ "$VERSION" != "latest" ]]; then
+      ref="--branch $VERSION"
+    fi
+    run git clone $ref --depth 1 "$GIT_URL" "$PROJECT_ROOT"
+    local sha
+    sha=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    CNCH_RESOLVED_VERSION="git-${sha}"
+    log "git 解析: → $CNCH_RESOLVED_VERSION"
+    return 0
+  fi
+  err "git 模式需要 git 仓库或 --git-url=<remote>"
+  return 1
+}
+
+# release 模式：从 GitHub Releases（或其他 host）下载预编译 tarball
+# 默认主机 https://github.com/cncachehub/cncachehub/releases
+resolve_source_release() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "[dry-run] 跳过 release 下载"
+    return 0
+  fi
+  local host="${RELEASE_URL:-https://github.com/cncachehub/cncachehub/releases}"
+  local version="$VERSION"
+  # 1. 解析 version（latest → 查 API；具体 tag 直接用）
+  if [[ "$version" == "latest" ]]; then
+    log "查 $host 找最新 release…"
+    local api_url
+    if [[ "$host" == *"github.com"* ]]; then
+      api_url="https://api.github.com/repos/cncachehub/cncachehub/releases/latest"
+    else
+      # 自定义 host（如 Gitea）— 简单约定 /repos/{owner}/{repo}/releases/latest
+      api_url="$host/latest"
+    fi
+    local api_resp
+    api_resp=$(curl -fsSL "$api_url" 2>/dev/null || true)
+    if [[ -n "$api_resp" ]]; then
+      # GitHub API: "tag_name": "vX.Y.Z"
+      version=$(echo "$api_resp" | grep -oE '"tag_name":[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+    fi
+    if [[ -z "$version" ]]; then
+      err "查不到最新 release — 显式指定 --version=vX.Y.Z 或用 --source=git"
+      return 1
+    fi
+    CNCH_RESOLVED_VERSION="$version"
+  else
+    CNCH_RESOLVED_VERSION="$version"
+  fi
+  log "下载 release: $version"
+
+  # 2. 下载 tarball
+  local asset="cncachehub-${version}-linux-amd64.tar.gz"
+  local download_url
+  if [[ "$host" == *"github.com"* ]]; then
+    download_url="https://github.com/cncachehub/cncachehub/releases/download/${version}/${asset}"
+  else
+    download_url="$host/download/${version}/${asset}"
+  fi
+
+  local staging="/tmp/cnch-release-${version}-$$"
+  CNCH_STAGED_DIR="$staging"
+  run mkdir -p "$staging"
+
+  log "GET $download_url → $staging/$asset"
+  if ! curl -fsSL --fail -o "$staging/$asset" "$download_url"; then
+    err "下载失败 — 检查 --release-url / --version 是否正确"
+    rm -rf "$staging"
+    return 1
+  fi
+
+  log "解压到 $staging/ ..."
+  run tar -xzf "$staging/$asset" -C "$staging"
+  rm -f "$staging/$asset"
+  # 验证 manifest
+  if [[ ! -f "$staging/manifest.json" ]]; then
+    err "tarball 里没 manifest.json — 不是合法的 release 制品"
+    return 1
+  fi
+  # 切换 PROJECT_ROOT 到 staging
+  PROJECT_ROOT="$staging"
+  log "release 解析: → $CNCH_RESOLVED_VERSION (staged at $staging)"
+  return 0
+}
+
+# local 模式：啥也不做，用当前 $PROJECT_ROOT
+resolve_source_local() {
+  if [[ "$VERSION" != "latest" ]]; then
+    warn "--version=$VERSION 对 source=local 模式无效（忽略）— local 模式用当前源码"
+  fi
+  CNCH_RESOLVED_VERSION="local-dev"
+  log "local 模式: 用 $PROJECT_ROOT 当前源码"
+}
+
+# 顶层：根据 SOURCE 调用对应解析器
+resolve_source() {
+  if [[ $DRY_RUN -eq 1 && "$SOURCE" != "local" ]]; then
+    # dry-run 跳过 git fetch / release download，但记下来会干啥
+    log "[dry-run] source=$SOURCE version=$VERSION"
+    CNCH_RESOLVED_VERSION="dry-run"
+    return 0
+  fi
+  case "$SOURCE" in
+    local)   resolve_source_local ;;
+    git)     resolve_source_git ;;
+    release) resolve_source_release ;;
+  esac
 }
 
 # ============================================================================
@@ -1586,6 +1748,10 @@ main() {
     docker|systemd) ;;
     *) err "未知 runtime: $RUNTIME (支持: docker | systemd)"; exit 1 ;;
   esac
+  case "$SOURCE" in
+    local|git|release) ;;
+    *) err "未知 source: $SOURCE (支持: local | git | release)"; exit 1 ;;
+  esac
 
   # 早期校验：CLI 传的参数也走 validator
   if ! validate_cli_args; then
@@ -1605,6 +1771,12 @@ main() {
     exit 1
   fi
 
+  # 解析源码 / 制品（local / git / release）— 改 $PROJECT_ROOT
+  if ! resolve_source; then
+    err "源码解析失败 (source=$SOURCE version=$VERSION)"
+    exit 1
+  fi
+
   case "$SUBCOMMAND" in
     init)
       wizard_init
@@ -1619,6 +1791,11 @@ main() {
       do_uninstall
       ;;
   esac
+
+  # 清理 release 模式的临时目录（失败时也清）
+  if [[ -n "$CNCH_STAGED_DIR" && -d "$CNCH_STAGED_DIR" ]]; then
+    rm -rf "$CNCH_STAGED_DIR"
+  fi
 }
 
 main "$@"

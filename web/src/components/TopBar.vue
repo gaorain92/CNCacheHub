@@ -26,11 +26,27 @@ const envLabel = computed(() => {
 })
 
 const dotStatus = computed(() => {
-  if (health.loading && health.lastCheckedAt === 0) return 'unknown' as const
+  // 还没开始第一次检查 → unknown（灰 + 脉冲）
+  if (health.lastCheckedAt === 0) return 'unknown' as const
+  // 检查过且 status=ok + 拿到数据 → ok（绿）
   if (health.status === 'ok' && health.backendConnected) return 'ok' as const
-  if (health.status === 'down') return 'down' as const
-  if (!health.backendConnected) return 'down' as const
-  return 'warn' as const
+  // 明确知道 down → down（红）
+  if (health.status === 'down' || health.errorMessage) return 'down' as const
+  // 拿不到数据但也没明确错误 → unknown
+  return 'unknown' as const
+})
+
+const connLabel = computed(() => {
+  if (health.lastCheckedAt === 0) return '检测中…'
+  if (health.status === 'ok' && health.backendConnected) return '后端已连接'
+  if (health.status === 'down' || health.errorMessage) return '后端未连接'
+  return '检测中…'
+})
+
+const connColorClass = computed(() => {
+  if (connLabel.value === '后端已连接') return 'text-mint'
+  if (connLabel.value === '后端未连接') return 'text-rose-300'
+  return 'text-slate-400'
 })
 
 function goDiagnostics(): void {
@@ -71,8 +87,7 @@ function onUserCommand(c: string): void {
         <span>{{ envLabel }}</span>
         <span class="hidden sm:inline">·</span>
         <StatusDot :status="dotStatus" size="sm" :pulse="true" />
-        <span v-if="health.backendConnected" class="text-mint">后端已连接</span>
-        <span v-else class="text-rose-300">后端未连接</span>
+        <span :class="connColorClass">{{ connLabel }}</span>
       </div>
       <h1 class="mt-1 text-xl font-semibold tracking-tight truncate">
         {{ pageTitle }}
