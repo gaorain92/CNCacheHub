@@ -2,7 +2,7 @@
 
 > 自托管下载加速中枢 — Docker / SteamCMD / GitHub / Hugging Face / 测试浏览器 / 云原生工具，一套网关搞定。
 
-[完整 PRD](./docs/prd.md) · [高保真原型](./prototype/index.html) · [AGENTS.md](./AGENTS.md)
+[完整 PRD](./docs/prd.md) · [部署模式选型](./docs/deploy-modes.md) · [安全指南](./docs/security.md) · [AGENTS.md](./AGENTS.md)
 
 ---
 
@@ -68,29 +68,42 @@ curl http://localhost:8080/api/healthz
 
 ## 快速开始（生产模式）
 
+**两种部署模式** — 选一个：
+- **Docker Compose**（默认）— 自包含，需要 docker
+- **systemd + 二进制**（`--runtime=systemd`）— 不需要 docker，更轻
+
+详见 [docs/deploy-modes.md](./docs/deploy-modes.md) 选型指南。
+
 ### 方式 1：一键部署脚本（推荐）
 
 ```bash
-# 交互模式 — 逐步问关键参数
+# === Docker 模式（默认）===
 ./scripts/install.sh
+# 交互向导会问：Docker 还是 systemd（默认 docker）
 
-# 极速模式 — 用默认值 + 随机管理员密码
+# 极速
 ./scripts/install.sh --mode=express
 
-# 专家模式 — 暴露所有参数
+# 专家
 ./scripts/install.sh --mode=expert \
   --admin-password=xxx \
   --http-port=80 \
   --tls-mode=letsencrypt \
-  --domain=cnch.example.com \
-  --admin-email=admin@example.com
+  --domain=cnch.example.com
 
-# 远程部署（在开发机上跑，自动 ssh 到目标）
+# === systemd 模式（不依赖 docker）===
+./scripts/install.sh --runtime=systemd
+# 或
+./scripts/install.sh --runtime=systemd --mode=express
+
+# === 远程部署（开发机推到服务器）===
 ./scripts/install.sh --mode=express --host=root@1.2.3.4 --ssh-key=~/.ssh/id_ed25519
 
-# 升级 / 卸载
+# === 升级 / 卸载 ===
 ./scripts/install.sh update --mode=express
 ./scripts/install.sh uninstall --purge
+# 卸载时记得加 --runtime 跟当初一致，否则默认卸载 docker 模式
+./scripts/install.sh uninstall --runtime=systemd --purge
 ```
 
 支持的参数完整列表：`./scripts/install.sh --help`
@@ -98,22 +111,26 @@ curl http://localhost:8080/api/healthz
 **特性**：
 - 三种模式：`interactive` / `express` / `expert` — 从零对话到一键静默
 - 两种位置：`local`（在目标机上跑）/ `remote`（在开发机通过 ssh 推）
+- 两种 runtime：`docker` / `systemd` — 任选
 - 三个子命令：`init` / `update` / `uninstall`（含 `--purge` 删数据）
 - TLS 模式：HTTP only / 自签证书 / Let's Encrypt（自动签发）
-- 启动后健康检查 `/healthz`，失败给 docker compose logs 提示
+- 启动后健康检查 `/healthz`，失败给 docker compose logs / journalctl 提示
 - 生成配置写到 `deploy/generated/`（已 gitignore，敏感信息不进 git）
+- 自动识别 5 大 Linux 发行版（apt/dnf/yum/pacman/apk/zypper），缺 docker 时自动装
 
 ### 方式 2：手动部署
 
 ```bash
+# Docker 模式
 cd deploy
 cp .env.example .env
-# 编辑 .env，至少设置 ADMIN_PASSWORD 和 PUBLIC_DOMAIN
 docker compose up -d
-# → https://your-domain.example.com
+
+# systemd 模式 — 见 scripts/install-systemd.sh 内的 write_systemd_unit
+# 和 write_nginx_config，照着写到 /etc/systemd/system 和 /etc/nginx/sites-available
 ```
 
-详细部署与安全建议见 [`docs/prd.md` 第 19 章](./docs/prd.md)。
+详细部署与安全建议见 [docs/security.md](./docs/security.md)。
 
 ---
 

@@ -154,15 +154,18 @@ ensure_go() {
 
 # ============================================================================
 # Build: Go binary
+# 输出路径写到全局变量 CNCH_BUILT_BINARY（避免 $() 捕获到 log 输出）
 # ============================================================================
+CNCH_BUILT_BINARY=""
+CNCH_BUILT_WEB=""
+
 build_go_binary() {
-  # 输出到 $GENERATED_DIR/cncachehub-linux（或 macOS 是 darwin 后缀）
   local out="$GENERATED_DIR/cncachehub-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
   mkdir -p "$GENERATED_DIR"
   log "build Go 静态二进制 (CGO_ENABLED=0) → $out"
   if [[ $DRY_RUN -eq 1 ]]; then
     log "[dry-run] 跳过 build"
-    echo "$out"
+    CNCH_BUILT_BINARY="$out"
     return 0
   fi
   if [[ "$LOCATION" == "local" ]]; then
@@ -172,7 +175,7 @@ build_go_binary() {
     (cd "$PROJECT_ROOT/server" && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o "$out" ./cmd/cncachehub)
   fi
   ok "build 完: $out ($(du -h "$out" | awk '{print $1}'))"
-  echo "$out"
+  CNCH_BUILT_BINARY="$out"
 }
 
 # ============================================================================
@@ -184,7 +187,7 @@ build_web_dist() {
   log "build web dist (npm ci + vite build) → $out"
   if [[ $DRY_RUN -eq 1 ]]; then
     log "[dry-run] 跳过 web build"
-    echo "$out"
+    CNCH_BUILT_WEB="$out"
     return 0
   fi
   if [[ "$LOCATION" == "local" ]]; then
@@ -197,7 +200,7 @@ build_web_dist() {
     cp -r "$PROJECT_ROOT/web/dist" "$out"
   fi
   ok "web build 完: $out"
-  echo "$out"
+  CNCH_BUILT_WEB="$out"
 }
 
 # ============================================================================
@@ -497,10 +500,14 @@ start_systemd_service() {
     return 0
   fi
   if [[ "$LOCATION" == "local" ]]; then
-    run sudo systemctl enable --now "$CNCH_SERVICE_NAME"
+    # 总是 restart（fresh init 时 restart 跟 enable --now 效果一样，update 时会真的重启）
+    run sudo systemctl enable "$CNCH_SERVICE_NAME"
+    run sudo systemctl restart "$CNCH_SERVICE_NAME"
     run sudo systemctl reload nginx
   else
-    run remote_or_local "sudo systemctl enable --now $CNCH_SERVICE_NAME && sudo systemctl reload nginx"
+    run remote_or_local "sudo systemctl enable $CNCH_SERVICE_NAME && \
+      sudo systemctl restart $CNCH_SERVICE_NAME && \
+      sudo systemctl reload nginx"
   fi
   ok "$CNCH_SERVICE_NAME 已启动"
 }
@@ -569,14 +576,12 @@ install_systemd() {
   setup_systemd_dirs
 
   # 2) Build (本地 build，产物在 GENERATED_DIR/)
-  local binary_path
-  binary_path=$(build_go_binary)
-  local web_path
-  web_path=$(build_web_dist)
+  build_go_binary
+  build_web_dist
 
   # 3) 部署 binary + web
-  install_systemd_binary "$binary_path"
-  install_systemd_web "$web_path"
+  install_systemd_binary "$CNCH_BUILT_BINARY"
+  install_systemd_web "$CNCH_BUILT_WEB"
 
   # 4) 写 systemd unit + nginx site
   write_systemd_unit
@@ -605,14 +610,12 @@ update_systemd() {
   fi
 
   # 1) build
-  local binary_path
-  binary_path=$(build_go_binary)
-  local web_path
-  web_path=$(build_web_dist)
+  build_go_binary
+  build_web_dist
 
   # 2) 部署
-  install_systemd_binary "$binary_path"
-  install_systemd_web "$web_path"
+  install_systemd_binary "$CNCH_BUILT_BINARY"
+  install_systemd_web "$CNCH_BUILT_WEB"
 
   # 3) restart
   if [[ $DRY_RUN -eq 1 ]]; then
