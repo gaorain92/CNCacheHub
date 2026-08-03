@@ -65,7 +65,9 @@ data/
 *.sqlite3
 
 # Cache dirs (the actual cached blobs)
-cache/
+# 只忽略根目录的 cache/，不动 server/internal/cache/ 这种源码目录
+/cache/
+/cache
 
 # Prototype build artifacts
 prototype/dist/
