@@ -1,0 +1,138 @@
+# CNCacheHub CI
+#
+# 跑：Go 测试 + 前端 type-check / build + 集成 smoke
+# 不做：Docker 镜像 push（release 时单独工作流）
+#
+# 触发：PR / push 到 main
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 取消之前的同 workflow run（节省 CI 配额）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Go 后端 — test + vet + build
+  # ---------------------------------------------------------------------------
+  go:
+    name: go / test + vet + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: server/go.sum
+
+      - name: go mod download
+        working-directory: server
+        run: go mod download
+
+      - name: go vet
+        working-directory: server
+        run: go vet ./...
+
+      - name: go test (with coverage)
+        working-directory: server
+        run: |
+          go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out | tail -1
+
+      - name: go build
+        working-directory: server
+        run: CGO_ENABLED=0 go build -o ../bin/cncachehub ./cmd/cncachehub
+
+      - name: Upload coverage artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: server/coverage.out
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Vue 前端 — type-check + build
+  # ---------------------------------------------------------------------------
+  web:
+    name: web / type-check + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: type-check
+        working-directory: web
+        run: npm run type-check
+
+      - name: build
+        working-directory: web
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Docker 镜像构建（不 push，只验证能 build 通）
+  # ---------------------------------------------------------------------------
+  docker:
+    name: docker / build server image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build server image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: Dockerfile
+          push: false
+          tags: cncachehub-server:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Shell 脚本 lint（install.sh / install-systemd.sh）
+  # ---------------------------------------------------------------------------
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          additional_files: install.sh install-systemd.sh
+          ignore: SC1091,SC2086,SC2154
