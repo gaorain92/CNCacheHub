@@ -16,7 +16,7 @@ DIST_DIR     := dist
 SERVER_DIR   := server
 WEB_DIR      := web
 
-.PHONY: help dev build test release install clean lint type-check
+.PHONY: help dev build test release release-upload install clean lint type-check
 
 help: ## 打印所有目标
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -67,22 +67,21 @@ release: clean build-server build-web
 	@echo "打 Linux amd64 制品..."
 	cd $(SERVER_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$(GO_LDFLAGS)" -o ../$(DIST_DIR)/cncachehub-server-$(VERSION)-linux-amd64 ./cmd/cncachehub
 	cd $(WEB_DIR) && tar -czf ../$(DIST_DIR)/cncachehub-web-$(VERSION).tar.gz dist/
-	@cat > $(DIST_DIR)/manifest.json <<EOF
-{
-  "name": "cncachehub",
-  "version": "$(VERSION)",
-  "commit": "$(CNCH_COMMIT)",
-  "buildDate": "$(CNCH_DATE)",
-  "components": {
-    "server": {
-      "binary": "cncachehub-server-$(VERSION)-linux-amd64"
-    },
-    "web": {
-      "archive": "cncachehub-web-$(VERSION).tar.gz"
-    }
-  }
-}
-EOF
+	@printf '%s\n' \
+		'{' \
+		'  "name": "cncachehub",' \
+		'  "version": "$(VERSION)",' \
+		'  "commit": "$(CNCH_COMMIT)",' \
+		'  "buildDate": "$(CNCH_DATE)",' \
+		'  "components": {' \
+		'    "server": {' \
+		'      "binary": "cncachehub-server-$(VERSION)-linux-amd64"' \
+		'    },' \
+		'    "web": {' \
+		'      "archive": "cncachehub-web-$(VERSION).tar.gz"' \
+		'    }' \
+		'  }' \
+		'}' > $(DIST_DIR)/manifest.json
 	@cd $(DIST_DIR) && tar -czf cncachehub-$(VERSION)-linux-amd64.tar.gz \
 		cncachehub-server-$(VERSION)-linux-amd64 \
 		cncachehub-web-$(VERSION).tar.gz \
@@ -98,6 +97,85 @@ release-darwin:
 	tar -czf $(DIST_DIR)/cncachehub-$(VERSION)-darwin-amd64.tar.gz \
 		-C $(DIST_DIR) cncachehub-server-$(VERSION)-darwin-amd64
 	@echo "✓ Darwin 制品: $(DIST_DIR)/cncachehub-$(VERSION)-darwin-amd64.tar.gz"
+
+# === 上传 release 到 GitHub ===
+# 用法: make release-upload VERSION=v0.1.0
+# 依赖: gh CLI 已登录（gh auth status）
+# 行为: 先跑 release 打 Linux amd64 制品，然后用 gh release create 上传
+#
+# 可选变量:
+#   REPO = owner/repo  （默认从 git remote origin 推断）
+#   NOTES_FILE = path/to/notes.md  （默认用 git log 上一个 tag 起的 commits）
+release-upload: release ## 打制品并上传到 GitHub Releases（依赖 gh CLI + 登录 + 权限）
+	@if [ -z "$(VERSION)" ]; then echo "✗ VERSION 没设，用法：make release-upload VERSION=v0.1.0"; exit 1; fi
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "✗ gh CLI 没装，先装：brew install gh  或  https://cli.github.com/"; \
+		exit 1; \
+	fi
+	@if ! gh auth status >/dev/null 2>&1; then \
+		echo "✗ gh 没登录，先跑：gh auth login"; \
+		exit 1; \
+	fi
+	@REPO=$(REPO); \
+	if [ -z "$$REPO" ]; then \
+		REPO=$$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github.com[:/]+##; s#\.git$$##'); \
+	fi; \
+	if [ -z "$$REPO" ]; then \
+		echo "✗ 推断不到 repo，设 REPO=owner/repo 重跑"; \
+		exit 1; \
+	fi; \
+	echo "→ 上传 release 到 $$REPO @ $(VERSION)"; \
+	NOTES_FLAG=""; \
+	if [ -n "$(NOTES_FILE)" ] && [ -f "$(NOTES_FILE)" ]; then \
+		NOTES_FLAG="--notes-file $(NOTES_FILE)"; \
+	else \
+		# 自动从上一个 tag 起的 commit 摘 changelog
+		PREV_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || true); \
+		if [ -n "$$PREV_TAG" ]; then \
+			RANGE="$$PREV_TAG..HEAD"; \
+		else \
+			RANGE="HEAD~20..HEAD"; \
+		fi; \
+		NOTES_FILE_TMP=$$(mktemp); \
+		echo "## Changes" > $$NOTES_FILE_TMP; \
+		echo "" >> $$NOTES_FILE_TMP; \
+		git log --oneline --no-decorate $$RANGE >> $$NOTES_FILE_TMP 2>/dev/null || true; \
+		NOTES_FLAG="--notes-file $$NOTES_FILE_TMP"; \
+	fi; \
+	gh release create "$(VERSION)" \
+		$(DIST_DIR)/cncachehub-$(VERSION)-linux-amd64.tar.gz \
+		$(DIST_DIR)/cncachehub-server-$(VERSION)-darwin-amd64 2>/dev/null || true \
+		--repo "$$REPO" \
+		--title "CNCacheHub $(VERSION)" \
+		$$NOTES_FLAG \
+		--target "$(shell git rev-parse HEAD)"; \
+	echo ""; \
+	echo "✓ Release 上传完：https://github.com/$$REPO/releases/tag/$(VERSION)"
+
+# 验证 release 制品结构（CI / 本地用）
+release-verify: ## 验证 release 制品结构（manifest.json + 关键文件）
+	@if [ -z "$(VERSION)" ]; then echo "✗ VERSION 没设"; exit 1; fi
+	@ARCHIVE=$(DIST_DIR)/cncachehub-$(VERSION)-linux-amd64.tar.gz; \
+	if [ ! -f "$$ARCHIVE" ]; then \
+		echo "✗ $$ARCHIVE 不存在，先跑 make release VERSION=$(VERSION)"; \
+		exit 1; \
+	fi; \
+	echo "检查 $$ARCHIVE 内容..."; \
+	tar -tzf "$$ARCHIVE"; \
+	echo ""; \
+	rm -rf /tmp/cnch-verify && mkdir -p /tmp/cnch-verify; \
+	tar -xzf "$$ARCHIVE" -C /tmp/cnch-verify; \
+	if [ -f /tmp/cnch-verify/manifest.json ]; then \
+		echo "✓ manifest.json 存在"; \
+		cat /tmp/cnch-verify/manifest.json; \
+	else \
+		echo "✗ manifest.json 缺失"; \
+		rm -rf /tmp/cnch-verify; \
+		exit 1; \
+	fi; \
+	rm -rf /tmp/cnch-verify; \
+	echo ""; \
+	echo "✓ 制品结构正确"
 
 # === 安装 / 卸载 ===
 install: ## 跑 install.sh（需要本项目根目录）
