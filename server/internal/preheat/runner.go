@@ -89,15 +89,25 @@ func (r *Runner) CancelTask(taskID int64) bool {
 }
 
 // runTaskInner 实际执行入口（goroutine）。
+//
+// ctx 是 cancellable 的（用户 CancelTask 会触发），仅用于：
+//   - 中断 HTTP/执行循环
+//   - 判断循环是否被取消
+//
+// DB 写（UpdatePreheatTaskStatus / UpdatePreheatItem / UpdatePreheatTaskProgress）
+// 一律用独立的 statusCtx，避免 ctx 被 cancel 后状态卡在 "running"。
 func (r *Runner) runTaskInner(ctx context.Context, task storage.PreheatTask) {
 	start := time.Now()
-	if err := r.DB.UpdatePreheatTaskStatus(ctx, task.ID, storage.PreheatStatusRunning, "", 0); err != nil {
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer statusCancel()
+
+	if err := r.DB.UpdatePreheatTaskStatus(statusCtx, task.ID, storage.PreheatStatusRunning, "", 0); err != nil {
 		r.Log.Error("preheat: mark running failed", "task_id", task.ID, "err", err)
 		return
 	}
-	items, err := r.DB.ListPreheatItems(ctx, task.ID)
+	items, err := r.DB.ListPreheatItems(statusCtx, task.ID)
 	if err != nil {
-		r.markTaskError(ctx, task.ID, "list items: "+err.Error(), time.Since(start).Milliseconds())
+		r.markTaskError(statusCtx, task.ID, "list items: "+err.Error(), time.Since(start).Milliseconds())
 		return
 	}
 
@@ -126,7 +136,7 @@ func (r *Runner) runTaskInner(ctx context.Context, task storage.PreheatTask) {
 		finalStatus = storage.PreheatStatusCanceled
 		finalErr = "canceled by user"
 	}
-	if err := r.DB.UpdatePreheatTaskStatus(ctx, task.ID, finalStatus, finalErr, dur); err != nil {
+	if err := r.DB.UpdatePreheatTaskStatus(statusCtx, task.ID, finalStatus, finalErr, dur); err != nil {
 		r.Log.Error("preheat: mark final status failed", "task_id", task.ID, "err", err)
 	}
 }
@@ -136,9 +146,13 @@ func (r *Runner) markTaskError(ctx context.Context, taskID int64, msg string, du
 }
 
 // runItem 跑单条 target；返回 error 不致命（仅写 item status = error），由 caller 聚合。
+//
+// ctx 用作 HTTP/执行的可取消上下文；DB 写用独立的 writeCtx，避免 cancel 阻断状态落地。
 func (r *Runner) runItem(ctx context.Context, task storage.PreheatTask, item storage.PreheatItem) error {
 	startedAt := time.Now().Unix()
-	_ = r.DB.UpdatePreheatItem(ctx, item.ID, storage.PreheatItemRunning, "", 0, startedAt, 0)
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer writeCancel()
+	_ = r.DB.UpdatePreheatItem(writeCtx, item.ID, storage.PreheatItemRunning, "", 0, startedAt, 0)
 
 	var (
 		bytesAdded int64
@@ -162,11 +176,11 @@ func (r *Runner) runItem(ctx context.Context, task storage.PreheatTask, item sto
 		finalStatus = storage.PreheatItemError
 		finalErr = err.Error()
 	}
-	if updateErr := r.DB.UpdatePreheatItem(ctx, item.ID, finalStatus, finalErr, bytesAdded, startedAt, finishedAt); updateErr != nil {
+	if updateErr := r.DB.UpdatePreheatItem(writeCtx, item.ID, finalStatus, finalErr, bytesAdded, startedAt, finishedAt); updateErr != nil {
 		r.Log.Error("preheat: update item", "err", updateErr)
 	}
 	// 累加 task 进度（成功和失败都算 1 done）
-	if updateErr := r.DB.UpdatePreheatTaskProgress(ctx, task.ID, 1, bytesAdded); updateErr != nil {
+	if updateErr := r.DB.UpdatePreheatTaskProgress(writeCtx, task.ID, 1, bytesAdded); updateErr != nil {
 		r.Log.Error("preheat: update task progress", "err", updateErr)
 	}
 	return err
@@ -271,30 +285,60 @@ func (r *Runner) runSteamAppID(ctx context.Context, target string) error {
 // 短形式 "nginx:alpine" → registry="dockerhub", name="library/nginx", ref="alpine"。
 // "nginx" → registry="dockerhub", name="library/nginx", ref="latest"。
 func splitDockerImage(target string) (registry, name, ref string, err error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		err = errors.New("empty docker image target")
+		return
+	}
+	// digest 形如 name@sha256:abc... — @ 之后的整体作为 ref，不再切
+	if at := strings.Index(target, "@"); at > 0 {
+		namePart := target[:at]
+		ref = target[at+1:]
+		registry, name = inferRegistryAndName(namePart)
+		if registry == "" {
+			err = errors.New("cannot infer registry from target: " + target)
+		}
+		return
+	}
 	ref = "latest"
 	// 拆 ref
 	if i := strings.LastIndex(target, ":"); i > 0 && !strings.Contains(target[i:], "/") {
 		ref = target[i+1:]
 		target = target[:i]
 	}
-	// 拆 registry（按第一个 "." 或 ":" 之前不出现 "/"）
-	parts := strings.SplitN(target, "/", 2)
-	if len(parts) == 2 && (strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost") {
-		registry = registryNameFromHost(parts[0])
-		name = target
-	} else {
-		registry = "dockerhub"
-		name = "library/" + target
-	}
+	registry, name = inferRegistryAndName(target)
 	if registry == "" {
 		err = errors.New("cannot infer registry from target: " + target)
 	}
 	return
 }
 
+// inferRegistryAndName 从 namePart（无 ref 段）推 registry + 完整 name。
+// 规则：含 "." 或 ":" 的第一段当作 registry host；纯段（如 "library/ubuntu"）走 dockerhub。
+func inferRegistryAndName(namePart string) (registry, name string) {
+	parts := strings.SplitN(namePart, "/", 2)
+	if len(parts) == 2 && (strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost") {
+		registry = registryNameFromHost(parts[0])
+		name = namePart
+		return
+	}
+	// dockerhub 走 library/* 路径；若 user 已显式写 library/，保留
+	registry = "dockerhub"
+	if strings.HasPrefix(namePart, "library/") {
+		name = namePart
+	} else {
+		name = "library/" + namePart
+	}
+	return
+}
+
 // registryNameFromHost "ghcr.io" → "ghcr", "quay.io" → "quay", "docker.io" → "dockerhub"（特殊）。
+// 端口（":5000" 形式）会被剥掉，再走映射/兜底逻辑。
 // 与 storage/registry_upstreams.go 里的 name 对齐。
 func registryNameFromHost(host string) string {
+	if i := strings.Index(host, ":"); i >= 0 {
+		host = host[:i]
+	}
 	switch host {
 	case "docker.io", "registry-1.docker.io", "index.docker.io":
 		return "dockerhub"

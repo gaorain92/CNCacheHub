@@ -333,7 +333,8 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(requestIDMiddleware())
 	r.Use(chimw.RealIP)
 	r.Use(loggerMiddleware())
-	r.Use(chimw.Recoverer)
+	// 用自己的 recoverer（多打 stack + panic value + request 上下文）
+	r.Use(recovererMiddleware())
 	r.Use(jsonContentTypeMiddleware())
 	// 通用 API 限流（防 DoS，PRD §15.3）。
 	if opts.APIRateLimiter != nil {
