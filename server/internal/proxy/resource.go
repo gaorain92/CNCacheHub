@@ -300,9 +300,14 @@ func hasSensitiveQuery(rawQuery string) bool {
 	if err != nil {
 		return true // 解析不出按敏感处理
 	}
-	sensitive := []string{"token", "signature", "sig", "session", "auth", "key", "secret", "password"}
-	for _, k := range sensitive {
-		if v.Has(k) {
+	sensitive := map[string]struct{}{
+		"token": {}, "signature": {}, "sig": {}, "session": {},
+		"auth": {}, "key": {}, "secret": {}, "password": {},
+	}
+	// 大小写不敏感 — url.Values.Has 是 case-sensitive，但 query key
+	// 不区分大小写才是正确的安全策略（避免 TOKEN / Token / tOkEn 绕过）
+	for k := range v {
+		if _, ok := sensitive[strings.ToLower(k)]; ok {
 			return true
 		}
 	}
