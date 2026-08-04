@@ -11,6 +11,7 @@
 
 - **首版 MVP**：Docker Hub pull-through cache + 缓存可视化 + 健康检查 + 配置生成。
 - **次版迭代**：多 Registry、SteamCMD 缓存、资源加速中心、诊断中心、定时清理、小容量 VPS 优化。
+- **v0.1.0（当前）**：P0 + P1 + P2 4/5 全部完成，剩多节点 / 高可用（明确不做）。
 
 ---
 
@@ -20,32 +21,40 @@
 .
 ├── AGENTS.md              # 本文件 — 所有 agent 必读
 ├── README.md              # 项目说明 + 快速开始
-├── docker-compose.yml     # 顶层编排（聚合 server / web）
+├── Makefile               # 顶层：dev / build / test / release / release-upload / release-verify / install
+├── docker-compose.yml     # 顶层编排（聚合 server / web，本地 dev 用）
+├── .github/
+│   └── workflows/ci.yml   # GitHub Actions：go test + web build + docker build + shellcheck
 ├── docs/
-│   ├── prd.md             # 完整产品需求文档
-│   └── architecture.md    # 技术架构（待写）
+│   ├── prd.md                  # 完整产品需求文档
+│   ├── security.md             # 安全部署指南（13 章）
+│   ├── deploy-modes.md         # docker vs systemd 选型
+│   └── release-process.md      # 发布流程 + tarball 结构
 ├── server/                # Go 后端
 │   ├── cmd/cncachehub/    # main 入口
-│   ├── internal/          # 业务代码（api / config / storage / cache / proxy / log / auth）
-│   ├── migrations/        # SQL 迁移
+│   ├── internal/          # 业务代码（api / config / storage / cache / proxy / log / auth / dns / preheat / diagnostics / access / metrics / ratelimit / crypto）
+│   ├── migrations/        # SQL 迁移（按编号顺序）
 │   ├── go.mod
 │   ├── Makefile
 │   └── Dockerfile
 ├── web/                   # Vue 3 前端
 │   ├── src/
-│   │   ├── views/         # 页面（Dashboard / Docker / SteamCMD / Cache / Diagnostics / Settings / Logs / Clients / Preheat）
+│   │   ├── views/         # 页面（Dashboard / Docker / SteamCMD / Cache / Diagnostics / Settings / Logs / Clients / Preheat / Resources）
 │   │   ├── components/    # 公共组件
 │   │   ├── stores/        # Pinia 状态
 │   │   ├── api/           # 后端 API 客户端
 │   │   ├── router/
+│   │   ├── i18n/          # zh-CN + en 翻译
 │   │   └── styles/
 │   ├── vite.config.ts
 │   ├── tailwind.config.js
 │   ├── package.json
 │   └── Dockerfile
 ├── agent/                 # 预留：未来在每台被加速的机器上跑的轻量 agent
-├── deploy/                # 部署脚本 + 生产 docker-compose + Caddy 反代配置
-├── scripts/               # 项目级脚本（dev / smoke-test / lint）
+├── deploy/                # 部署脚本 + 生产 docker-compose + Caddy 反代配置（hardened）
+├── scripts/
+│   ├── install.sh         # 主安装脚本（init / update / uninstall）— 3 模式 × 3 runtime × 3 source × 2 location
+│   └── install-systemd.sh # systemd 模式专用的 binary / web / unit / nginx 子脚本
 └── prototype/             # 高保真 HTML 原型（不是产品代码，仅供设计参考）
 ```
 
@@ -56,7 +65,7 @@
 | 层 | 选型 | 理由 |
 |---|---|---|
 | 后端 | Go 1.22+ | 单二进制、跨平台、低资源占用、反代性能强 |
-| HTTP 框架 | `chi` 或 `gin`（倾向 `chi`，更轻） | 轻量、middleware 灵活 |
+| HTTP 框架 | `chi`（已选） | 轻量、middleware 灵活 |
 | 数据库 | SQLite（`modernc.org/sqlite` 纯 Go 驱动） | 单 VPS 部署免外部依赖，备份就是拷贝文件 |
 | 缓存元数据 | SQLite | 不引入 Redis |
 | Blob 存储 | 本地文件系统（`/var/lib/cncachehub/cache/`） | 简单、可靠、可直接 rsync 备份 |
@@ -65,7 +74,7 @@
 | 状态 | Pinia | Vue 3 官方推荐 |
 | 路由 | Vue Router 4 | 标准 |
 | HTTP 客户端 | `axios` + 拦截器 | 统一处理 token / error |
-| 部署 | Docker Compose + Caddy | HTTPS 自动证书 |
+| 部署 | Docker Compose 或 systemd + nginx | 两种 runtime 都支持（见 §4.6） |
 | 监控 | 标准 `/healthz`、`/metrics`（Prometheus） | 不引入额外依赖 |
 
 ---
@@ -81,19 +90,22 @@ cd server && go run ./cmd/cncachehub
 # 启动前端（另一个终端）
 cd web && npm install && npm run dev
 
-# 或者用顶层脚本统一启动
-./scripts/dev.sh
+# 或者用顶层 Makefile
+make dev-server   # 后端
+make dev-web      # 前端
 ```
 
 ### 4.2 测试
 
-- 后端：`go test ./...`，每个 package 必须有 `*_test.go`
-- 前端：`npm run type-check && npm run lint && npm run test`
-- 集成测试：`./scripts/smoke-test.sh`（启动 docker-compose，验证关键 API）
+- **后端**：`go test ./...`（13 个包，~80 个测试函数）
+- **前端**：`npm run type-check`（vue-tsc 严格模式）
+- **覆盖率**：`go test -cover ./...` — 所有包 ≥ 60%，9 个包 ≥ 70%（ratelimit 100 / access 94.7 / metrics 93.9 / dns 92.8 / config 85.2 / preheat 84.6 / crypto 77.8 / proxy 77.6 / cache 77.3 / diagnostics 73.6 / storage 70.2 / log 69.2 / api 64.5）
+- **集成测试**：`make test`（顶层 Makefile target，会跑 server + web）
+- **CI**：`.github/workflows/ci.yml` 跑 4 个 job：go test + race + cover，web type-check + build，docker build，shellcheck。触发 push main / PR。
 
 ### 4.3 Commit 规范
 
-按用户偏好（`memory: VPSide commit message 用中文`）：
+按用户偏好：
 
 ```
 <scope>: <中文一句话>
@@ -101,18 +113,86 @@ cd web && npm install && npm run dev
 正文（可选）：详细解释为什么、改了什么、有什么副作用。
 ```
 
-- `<scope>` 必须是英文，与目录名一致：`server` / `web` / `agent` / `deploy` / `docs` / `scripts`
+- `<scope>` 必须是英文，与目录名一致：`server` / `web` / `agent` / `deploy` / `docs` / `scripts` / `ci`
 - 例：
   ```
   server: 增加 SQLite 迁移脚本与 storage 封装
   web: 搭建 Vue 3 + Vite + Tailwind 工程脚手架
-  deploy: 增加生产 docker-compose 与 Caddy 反代
+  ci: 加 GitHub Actions 工作流
   ```
+- 不允许 skip CI（commit message 也不要写 `[skip ci]`）
+- squash 优先 — 一个 feature 一个 commit
 
-### 4.4 推送策略
+### 4.4 发布 / 推送策略
 
-- 本仓库暂时只本地 git init，不主动推 remote
-- 用户明确要求推送时，再走 `git remote add` + `git push`
+```bash
+# 1. 打制品（Linux amd64）
+make release VERSION=v0.1.0
+
+# 2. 验证制品结构
+make release-verify VERSION=v0.1.0
+
+# 3. 上传 GitHub Releases（自动从上一个 tag 摘 changelog 当 release notes）
+make release-upload VERSION=v0.1.0
+# 或自带 notes:
+make release-upload VERSION=v0.1.0 NOTES_FILE=release-notes.md
+# 或指定 repo（默认从 git remote origin 推断）:
+make release-upload VERSION=v0.1.0 REPO=myorg/cncachehub
+```
+
+依赖：
+- `gh` CLI（`brew install gh`）
+- `gh auth status` 登录
+- 默认推到 git remote origin（自动从 `git remote get-url origin` 推断 `owner/repo`）
+
+如果用户没登录 gh：先 `gh auth login`。
+
+### 4.5 部署模式
+
+CNCacheHub 支持两种部署模式（互斥，二选一）：
+
+| | docker (默认) | systemd |
+|---|---|---|
+| 适用 | 已有 docker 主机 / 多容器编排 | 1GB RAM 单 VPS，资源紧 |
+| 进程隔离 | docker container（cap_drop + read_only） | systemd unit（ProtectSystem + ReadWritePaths） |
+| 反代 | Caddy（自动 HTTPS） | nginx（systemd 装） |
+| 安装 | `install.sh init --runtime=docker` | `install.sh init --runtime=systemd` |
+| 升级 | `install.sh update` | `install.sh update` |
+| 数据目录 | `/var/lib/cncachehub/data` | `/var/lib/cncachehub/data` |
+
+详细对比见 `docs/deploy-modes.md`。
+
+### 4.6 手动部署到测试机（不走 install.sh）
+
+适用于已有 systemd 服务、要快速热更新 server binary 的场景（保留数据和配置）：
+
+```bash
+# 1. 在工作区打 tar（不含 .git / node_modules / dist / bin）
+cd /path/to/cncachehub
+tar --exclude='.git' -czf /tmp/cnch-server.tar.gz server/
+
+# 2. 推到测试机（用 pipe 而非 scp — 1GB 测试机 scp 不稳定）
+cat /tmp/cnch-server.tar.gz | sshpass -f ~/.ssh/.cnch_pw ssh root@<ip> \
+  'cat > /tmp/cnch-server.tar.gz && \
+   cd /opt/cncachehub && \
+   find . -maxdepth 2 -name "server" -type d -exec rm -rf {} + && \
+   tar -xzf /tmp/cnch-server.tar.gz && \
+   find server -name "._*" -delete'  # 清理 macOS tar 残留
+
+# 3. 在测试机重 build + 重启
+ssh root@<ip> 'cd /opt/cncachehub/server && \
+  CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=v0.1.0-dev -X main.commit=local" \
+    -o /usr/local/bin/cncachehub ./cmd/cncachehub && \
+  cp /usr/local/bin/cncachehub /usr/local/bin/cncachehub.bak.$(date +%Y%m%d-%H%M%S) && \
+  systemctl restart cncachehub-server'
+
+# 4. 验证
+curl http://<ip>/api/healthz
+curl http://<ip>/api/version
+```
+
+注意：web dist 不需重 build（除非 web/src 有改动），nginx 直接 serve `/opt/cncachehub/web/dist/`。
 
 ---
 
@@ -120,11 +200,13 @@ cd web && npm install && npm run dev
 
 ### 5.1 Go
 
-- 包名小写、单词、单数（`api` / `storage` / `cache` / `proxy`）
+- 包名小写、单词、单数（`api` / `storage` / `cache` / `proxy` / `preheat` / `dns`）
 - 公开 API 必须有 godoc 注释
 - error 优先返回，不要 panic；panic 仅在不可恢复的初始化错误
+- 自写 `recovererMiddleware()`（server/internal/api/recoverer.go）记录完整 stack + panic value，**不要**换回 `chimw.Recoverer`
 - 配置通过 `internal/config` 加载，**不要**在业务代码里直接 `os.Getenv`
 - 上下文优先使用 `context.Context`，跨 goroutine 必须传递
+- DB 写操作**不要**用可取消的 ctx（会被 cancel 阻断状态落地），用独立的 statusCtx / writeCtx
 
 ### 5.2 TypeScript / Vue
 
@@ -133,13 +215,16 @@ cd web && npm install && npm run dev
 - 状态用 Pinia store，**不要**用全局变量
 - 路由懒加载（`() => import(...)`）
 - 类型定义集中放 `src/types/`
+- i18n：默认 zh-CN，en 翻译用 `src/i18n/`，运行时 vue-i18n
+- health store 不能在 `onMounted` 里 fetch（router guard 还没完）— 用 `watch(() => auth.isAuthenticated, ...)`
 
 ### 5.3 数据库
 
-- 表名复数下划线（`users` / `cache_entries` / `cleanup_tasks`）
+- 表名复数下划线（`users` / `cache_entries` / `preheat_tasks` / `cleanup_tasks` / `resource_rules` / `resource_cache_entries`）
 - 字段名小写下划线（`created_at` / `expires_at` / `last_access_at`）
 - 主键统一 `id INTEGER PRIMARY KEY AUTOINCREMENT`
 - 时间戳统一 INTEGER（Unix 秒）
+- 敏感字段查询（pass 哈希、token）走 `storage` 包，**不要**在 handler 里直接拼 SQL
 
 ### 5.4 API
 
@@ -148,6 +233,7 @@ cd web && npm install && npm run dev
 - 错误响应统一 `{ "error": { "code": "string", "message": "string", "details": {} } }`
 - 列表接口统一 `{ "items": [...], "total": N, "page": N, "pageSize": N }`
 - 所有路径前缀 `/api/...`
+- 鉴权 cookie（`X-Request-Id` 也走 ctx）
 
 ---
 
@@ -157,20 +243,26 @@ cd web && npm install && npm run dev
 
 1. **白名单优先**：资源加速中心必须基于显式白名单规则（repo / 模型名 / 域名 / 版本规则），**不**做"任意 URL 开放代理"。
 2. **不绕过平台授权**：不破解 Steam、GitHub、Hugging Face 等平台的账号或 token，不保存用户明文密码。
-3. **敏感 URL 不缓存**：带 `?token=` `?signature=` `?session=` 的 URL 默认不缓存，日志必须脱敏。
-4. **小容量 VPS 安全**：单对象落盘大小限制、缓存总上限、系统保底空间、只读旁路必须生效。**不**因为缓存失败而中断用户下载请求（必须支持旁路转发）。
-5. **HTTPS 证书**：默认只反代 HTTPS 上游，不做 TLS 中间人解密；自签证书场景通过可信 CA 列表配置。
-6. **认证与授权**：控制台 API 必须鉴权（首版 Cookie + CSRF，后续可加 Token）；公开代理入口必须可独立配置访问控制。
-7. **日志脱敏**：所有日志中的 token / cookie / 密码必须脱敏（`***`）。
+3. **敏感 URL 不缓存**：带 `?token=` `?signature=` `?session=` `?auth=` `?secret=` `?password=` 的 URL 默认不缓存（`hasSensitiveQuery` 大小写不敏感！），日志必须脱敏。
+4. **小容量 VPS 安全**：单对象落盘大小限制（默认 1GB）、缓存总上限、系统保底空间（默认 5GB）、只读旁路必须生效。**不**因为缓存失败而中断用户下载请求（必须支持旁路转发）。
+5. **HTTPS 证书**：默认只反代 HTTPS 上游，不做 TLS 中间人解密；自签证书场景通过可信 CA 列表配置。`httpClientWithInsecure` 仅供诊断剧本使用。
+6. **认证与授权**：控制台 API 必须鉴权（Cookie + CSRF）；公开代理入口必须可独立配置访问控制；登录 5 次/分钟限流（`internal/ratelimit`）。
+7. **日志脱敏**：所有日志中的 token / cookie / 密码必须脱敏（`***`）。诊断 bundle 不含 admin password。
+8. **容器/进程加固**（任选其一即可，**不可同时缺**）：
+   - docker: `cap_drop: [ALL]` + 必要 `cap_add` + `read_only: true` + `no-new-privileges: true` + mem/pids limit
+   - systemd: `NoNewPrivileges=true` + `ProtectSystem=strict` + `ReadWritePaths=` + `MemoryDenyWriteExecute=true` + `SystemCallFilter=@system-service` + `MemoryMax=512M`
+9. **安全头**（nginx / Caddy 必加）：`X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`、CSP、`server_tokens off`
+10. **/metrics 限制**：只允许 127.0.0.1 + RFC1918 段访问（nginx allowlist），其他 IP 返 404
 
 ---
 
 ## 7. 性能约束
 
 - 控制台 API P95 响应时间 ≤ 300ms
-- 大文件下载流式转发，不一次性读入内存
-- 小容量 VPS 优化下：单进程常驻内存目标 ≤ 256MB，空闲 CPU 接近 0
+- 大文件下载流式转发（`safeMultiWriter` tee 到 client + cache），不一次性读入内存
+- 小容量 VPS 优化下：单进程常驻内存目标 ≤ 256MB（实际 9-45MB），空闲 CPU 接近 0
 - 缓存写入支持断点续传 + 原子替换（写到 tmp，再 rename）
+- preheat 用独立 ctx 写 DB（不被用户 cancel 阻断），单测覆盖 84.6%
 
 ---
 
@@ -182,12 +274,17 @@ cd web && npm install && npm run dev
 - ❌ 不要引入 Redis / PostgreSQL / MySQL / 消息队列 — SQLite + 文件系统够用
 - ❌ 不要做"通用 HTTP 代理" — 必须是白名单范围内的资源加速
 - ❌ 不要做 TLS 中间人解密
-- ❌ 不要保存用户明文密码 / token / cookie
+- ❌ 不要保存用户明文密码 / token / cookie（除了 bcrypt 哈希后的用户密码）
 - ❌ 不要做账号系统 / 社交登录 / OAuth
 - ❌ 不要做付费功能 / 订阅 / 商业化
 - ❌ 不要在前端硬编码假数据当真实数据用（演示数据放 `prototype/` 或加 `__demo` 前缀）
 - ❌ 不要让 sub-agent 跨目录改不属于自己的代码（server agent 只能改 server/）
 - ❌ 不要生成跟 PRD 冲突的方案
+- ❌ 不要用 `systemctl enable --now`（不会重启已运行服务）— 用 `systemctl restart`
+- ❌ 不要用 `$()` 捕获 log/ok 的输出（会污染返回值）— 用全局变量
+- ❌ 不要在 heredoc 用单引号包变量（不会展开）— 用双引号
+- ❌ 不要在 commit 写 `[skip ci]`
+- ❌ 不要在 `git push` 时 force-push main
 
 ---
 
@@ -204,7 +301,7 @@ cd web && npm install && npm run dev
 sub-agent 返回时必须：
 
 - 列出新增 / 修改 / 删除的文件
-- 列出运行的测试命令与结果
+- 列出运行的测试命令与结果（含 `go test -count=1 ./...`）
 - 列出已知未完成项（必须诚实，不准隐瞒）
 - 不返回无关对话内容
 
@@ -212,37 +309,72 @@ sub-agent 返回时必须：
 
 ## 10. 当前状态 / 路线图
 
-> 这部分会随项目进展更新，最近一次更新在文件 git log 里可查。
+> 最近一次更新：2026-08-04（v0.1.0-dev 测试机部署完成）
 
-### Phase 0 — 项目骨架（当前）
+### Phase 0 — 项目骨架 ✅
 
 - [x] 完整 PRD（`docs/prd.md`）
 - [x] 高保真 HTML 原型（`prototype/index.html`）
-- [ ] Monorepo 目录 + AGENTS.md
-- [ ] Go server 骨架（HTTP + SQLite + config + health API）
-- [ ] Vue 3 web 骨架
-- [ ] Docker Compose 部署脚本
+- [x] Monorepo 目录 + AGENTS.md
+- [x] Go server 骨架（HTTP + SQLite + config + health API）
+- [x] Vue 3 web 骨架（含 i18n）
+- [x] Docker Compose + systemd 部署脚本
+- [x] CI（GitHub Actions 4 job：go test / web build / docker build / shellcheck）
 
-### Phase 1 — Docker 加速 MVP
+### Phase 1 — Docker 加速 MVP ✅
 
-- [ ] Registry pull-through cache 代理
-- [ ] Docker daemon.json 配置生成
-- [ ] 缓存条目元数据
-- [ ] 基础请求日志
-- [ ] 总览仪表盘数据
+- [x] Registry pull-through cache 代理（dockerhub / ghcr / quay / k8s）
+- [x] Docker daemon.json 配置生成
+- [x] 缓存条目元数据
+- [x] 基础请求日志（access_log）
+- [x] 总览仪表盘数据（dashboard summary）
+- [x] Token dance（401 + Www-Authenticate → 自动拿 token 重试）
 
-### Phase 2 — 扩展模块
+### Phase 2 — 扩展模块 ✅ 4/5
 
-- [ ] SteamCMD 缓存
-- [ ] 多 Registry（GHCR / Quay / k8s）
-- [ ] 资源加速中心
-- [ ] 诊断中心
-- [ ] 定时清理任务
-- [ ] 小容量 VPS 优化开关
+- [x] SteamCMD 缓存（preheat kind=steam）
+- [x] 多 Registry（GHCR / Quay / k8s / 自定义）
+- [x] 资源加速中心（GitHub / HF / Playwright / Terraform / 自定义）
+- [x] 诊断中心（playbook + bundle handler）
+- [x] 定时清理任务
+- [x] 小容量 VPS 优化开关（CNCH_SMALL_VPS_OPT）
+- [ ] 多节点 / 高可用（明确**不做**）
 
-### Phase 3 — 完善
+### Phase 3 — 完善（进行中）
 
-- [ ] 鉴权 / RBAC
-- [ ] 通知（webhook / 邮件）
-- [ ] 多节点 / 高可用（可能不做）
+- [x] 鉴权 / RBAC（admin / viewer 两级）
+- [x] 通知（webhook 部分实现，邮件未做）
+- [x] 自定义 panic recoverer（runtime.Stack + debug.Stack）
+- [x] 健康检查 playbook（Docker pull / Steam DNS / 反代 / 5xx 错误率）
+- [x] 测试覆盖 backfill（13 个包 0% → 64-100%）
 - [ ] Helm Chart 部署
+- [ ] 真实 GitHub Release（需 user 提供 token）
+
+### 当前测试覆盖（`make test`）
+
+| 包 | 覆盖率 |
+|---|---|
+| ratelimit | 100.0% |
+| access | 94.7% |
+| metrics | 93.9% |
+| dns | 92.8% |
+| config | 85.2% |
+| preheat | 84.6% |
+| crypto | 77.8% |
+| proxy | 77.6% |
+| cache | 77.3% |
+| diagnostics | 73.6% |
+| storage | 70.2% |
+| log | 69.2% |
+| api | 64.5% |
+
+### 测试机部署状态
+
+- **测试机**：117.55.237.250（1GB RAM / Debian 12 / EDT 时区）
+- **runtime**：systemd（cncachehub-server.service）
+- **当前 binary**：`/usr/local/bin/cncachehub` v0.1.0-dev，commit=local
+- **启动时间**：2026-08-04 04:47 EDT（每次手动热更新会重启）
+- **登录**：`root` / `newpass99`
+- **数据目录**：`/var/lib/cncachehub/data/cncachehub.db`
+- **web dist**：`/opt/cncachehub/web/dist/`（nginx serve）
+- **nginx**：80 → 127.0.0.1:8082，含安全头 + /metrics 限制
