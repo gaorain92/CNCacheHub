@@ -292,6 +292,7 @@ type SystemSettings struct {
 	CleanupTargetPct  int    `json:"cleanupTargetPct"`
 	PublicBaseURL     string `json:"publicBaseUrl"`
 	LogRetentionDays  int    `json:"logRetentionDays"` // 0 = 不自动清理
+	HuggingFaceTokenSet bool `json:"huggingfaceTokenSet"` // 是否配置了 HF token（不返真值）
 	UpdatedAt         int64  `json:"updatedAt"`
 }
 
@@ -305,6 +306,8 @@ type SettingsPatch struct {
 	CleanupTargetPct  *int    `json:"cleanupTargetPct,omitempty"`
 	PublicBaseURL     *string `json:"publicBaseUrl,omitempty"`
 	LogRetentionDays  *int    `json:"logRetentionDays,omitempty"`
+	HuggingFaceToken  *string `json:"huggingfaceToken,omitempty"`  // 设空串 = 清空
+	ClearHuggingFaceToken bool `json:"clearHuggingFaceToken,omitempty"` // 显式清空
 }
 
 // RegistryPatch 是 PATCH /api/registries/:name 入参。

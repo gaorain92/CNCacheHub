@@ -18,6 +18,9 @@ const cleanupTriggerPct = ref(80)
 const cleanupTargetPct = ref(60)
 const publicBaseUrl = ref('')
 const logRetentionDays = ref(30)
+const hfToken = ref('')
+const hfTokenSet = ref(false)
+const hfTokenDirty = ref(false)
 
 // 模板里要用 location（vue 模板没有 window 顶层）
 const currentLocation =
@@ -50,6 +53,9 @@ function syncFromStore(): void {
   cleanupTargetPct.value = settings.data.cleanupTargetPct
   publicBaseUrl.value = settings.data.publicBaseUrl || ''
   logRetentionDays.value = settings.data.logRetentionDays ?? 30
+  hfTokenSet.value = !!settings.data.huggingfaceTokenSet
+  hfToken.value = ''  // 永远不预填真值
+  hfTokenDirty.value = false
 }
 
 function syncAccessFromStore(): void {
@@ -79,7 +85,8 @@ const dirty = computed(() => {
     cleanupTriggerPct.value !== settings.data.cleanupTriggerPct ||
     cleanupTargetPct.value !== settings.data.cleanupTargetPct ||
     (publicBaseUrl.value || '') !== (settings.data.publicBaseUrl || '') ||
-    logRetentionDays.value !== (settings.data.logRetentionDays ?? 30)
+    logRetentionDays.value !== (settings.data.logRetentionDays ?? 30) ||
+    hfTokenDirty.value
   )
 })
 
@@ -126,12 +133,36 @@ async function onSave(): Promise<void> {
     cleanupTargetPct: cleanupTargetPct.value,
     publicBaseUrl: publicBaseUrl.value,
     logRetentionDays: logRetentionDays.value,
+    // 只有当用户主动改 token 时才发（避免每次保存意外清空已有 token）
+    ...(hfTokenDirty.value ? { huggingfaceToken: hfToken.value } : {}),
   })
   saving.value = false
   if (ok) {
     ElMessage.success('设置已保存')
+    hfToken.value = ''  // 清空输入框
+    hfTokenDirty.value = false
+    // 刷新 hfTokenSet 状态
+    if (settings.data) {
+      hfTokenSet.value = !!settings.data.huggingfaceTokenSet
+    }
   } else {
     ElMessage.error(settings.errorMessage || '保存失败')
+  }
+}
+
+async function onClearHFToken(): Promise<void> {
+  saving.value = true
+  const ok = await settings.patch({ clearHuggingFaceToken: true })
+  saving.value = false
+  if (ok) {
+    ElMessage.success('HuggingFace token 已清空')
+    hfToken.value = ''
+    hfTokenDirty.value = false
+    if (settings.data) {
+      hfTokenSet.value = !!settings.data.huggingfaceTokenSet
+    }
+  } else {
+    ElMessage.error(settings.errorMessage || '清空失败')
   }
 }
 
@@ -378,6 +409,55 @@ function generateRandomToken(): void {
           </p>
         </div>
       </div>
+    </div>
+
+    <!-- HuggingFace 模型下载 token（v0.1.0+） -->
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 p-6 space-y-4">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🧠</span>
+        <h3 class="text-base font-semibold">HuggingFace 模型下载</h3>
+        <el-tag v-if="hfTokenSet" size="small" type="success" effect="plain">token 已配置</el-tag>
+        <el-tag v-else size="small" type="warning" effect="plain">token 未配置（gated 模型 401）</el-tag>
+      </div>
+      <p class="text-sm text-slate-400 leading-relaxed">
+        公共模型（<code class="text-slate-200">bert-base-uncased</code> / <code class="text-slate-200">Qwen/Qwen2.5-1.5B-Instruct</code> 等）无需 token。
+        gated 模型（Llama / 部分 Mistral 等）需要
+        <a href="https://huggingface.co/settings/tokens" target="_blank" class="text-sky-400 hover:underline">HF access token</a>
+        注入到 <code class="text-slate-200">Authorization: Bearer</code> 头。
+        启用 <code class="text-slate-200">huggingface-models</code> 规则后即可使用。
+      </p>
+      <div class="flex items-end gap-3">
+        <div class="flex-1">
+          <label class="text-xs text-slate-400 mb-2 block">
+            Access Token
+            <span v-if="hfTokenSet && !hfTokenDirty" class="text-slate-500 ml-2">
+              （已配置，输入新值覆盖；留空保存即清空）
+            </span>
+          </label>
+          <el-input
+            v-model="hfToken"
+            type="password"
+            show-password
+            placeholder="hf_xxxxxxxxxxxxxxxxxxxxxx"
+            clearable
+            @input="hfTokenDirty = true"
+          />
+        </div>
+        <el-button
+          v-if="hfTokenSet"
+          size="default"
+          plain
+          type="warning"
+          :loading="saving"
+          @click="onClearHFToken"
+        >
+          清空
+        </el-button>
+      </div>
+      <p class="text-[11px] text-slate-500">
+        安全提示：token 仅用于上游鉴权，不返显到 API 响应（设置页只显示"已/未配置"）。
+        审计日志记录 token 长度但永远不写明文。
+      </p>
     </div>
 
     <!-- 代理访问控制（P2#4 / PRD §9.7.2） -->

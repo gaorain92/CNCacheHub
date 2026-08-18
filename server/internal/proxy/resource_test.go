@@ -507,3 +507,120 @@ func TestResource_TTLApplied(t *testing.T) {
 		t.Errorf("ExpiresAt = %d, want ~%d", got.ExpiresAt, before+60)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// HuggingFace 模型下载 — token 注入
+// ---------------------------------------------------------------------------
+
+func TestResource_HuggingFace_TokenInjected(t *testing.T) {
+	var gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("model-weights"))
+	}))
+	t.Cleanup(up.Close)
+
+	h, db, _ := newTestResourceHandler(t, up.URL)
+	// 用 huggingface_models kind
+	if _, err := db.CreateResourceRule(context.Background(), storage.ResourceRule{
+		Name:              "hf-models-test",
+		Kind:              "huggingface_models",
+		UpstreamURL:       up.URL,
+		PathPattern:       "*",
+		DefaultTTLSeconds: 3600,
+		Enabled:           true,
+		Description:       "HF models",
+	}); err != nil {
+		t.Fatalf("CreateResourceRule: %v", err)
+	}
+	// 注入 token
+	h.GetHuggingFaceToken = func() string { return "hf_testtoken123" }
+
+	rr := do(t, h, http.MethodGet, "/r/hf-models-test/bert-base-uncased/resolve/main/config.json")
+	if rr.Code != 200 {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	want := "Bearer hf_testtoken123"
+	if gotAuth != want {
+		t.Errorf("upstream Authorization = %q, want %q", gotAuth, want)
+	}
+}
+
+func TestResource_HuggingFace_NoToken_NoAuth(t *testing.T) {
+	var gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(up.Close)
+
+	h, db, _ := newTestResourceHandler(t, up.URL)
+	if _, err := db.CreateResourceRule(context.Background(), storage.ResourceRule{
+		Name:              "hf-models-test",
+		Kind:              "huggingface_models",
+		UpstreamURL:       up.URL,
+		PathPattern:       "*",
+		DefaultTTLSeconds: 3600,
+		Enabled:           true,
+	}); err != nil {
+		t.Fatalf("CreateResourceRule: %v", err)
+	}
+	// GetHuggingFaceToken = nil（未配置） → 不注入
+	rr := do(t, h, http.MethodGet, "/r/hf-models-test/foo/resolve/main/x")
+	if rr.Code != 200 {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if gotAuth != "" {
+		t.Errorf("upstream Authorization should be empty when token not configured, got %q", gotAuth)
+	}
+}
+
+func TestResource_HuggingFace_EmptyToken_NoAuth(t *testing.T) {
+	// token 配了但空串（user 主动清空） — 不注入
+	var gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(up.Close)
+
+	h, db, _ := newTestResourceHandler(t, up.URL)
+	if _, err := db.CreateResourceRule(context.Background(), storage.ResourceRule{
+		Name:              "hf-models-test",
+		Kind:              "huggingface_models",
+		UpstreamURL:       up.URL,
+		PathPattern:       "*",
+		DefaultTTLSeconds: 3600,
+		Enabled:           true,
+	}); err != nil {
+		t.Fatalf("CreateResourceRule: %v", err)
+	}
+	h.GetHuggingFaceToken = func() string { return "   " } // 空白
+
+	_ = do(t, h, http.MethodGet, "/r/hf-models-test/foo/resolve/main/x")
+	if gotAuth != "" {
+		t.Errorf("whitespace-only token should not inject, got Authorization = %q", gotAuth)
+	}
+}
+
+func TestResource_OtherKind_TokenNotInjected(t *testing.T) {
+	// 普通 rule 不应该注入 token（即使配置了 hf_token）
+	var gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(up.Close)
+
+	h, db, _ := newTestResourceHandler(t, up.URL)
+	// 普通 github kind
+	seedRule(t, db, "r1", up.URL, "*", true)
+	h.GetHuggingFaceToken = func() string { return "hf_should_not_inject" }
+
+	_ = do(t, h, http.MethodGet, "/r/r1/foo/bar")
+	if gotAuth != "" {
+		t.Errorf("non-huggingface kind should not inject Authorization, got %q", gotAuth)
+	}
+}

@@ -38,6 +38,11 @@ type ResourceHandler struct {
 	HTTP            *http.Client
 	MaxObjectSize   int64
 	CacheReserveGB  int64 // 暂未用（bypass 留给全局策略）
+
+	// GetHuggingFaceToken 返 HF access token（空串 = 未配置）。
+	// kind="huggingface_models" 时注入 Authorization: Bearer 头。
+	// 不配置（nil）则不注入。PRD §9.4.5
+	GetHuggingFaceToken func() string
 }
 
 // NewResourceHandler 构造 handler。
@@ -145,6 +150,14 @@ func (h *ResourceHandler) serveFromUpstream(w http.ResponseWriter, r *http.Reque
 	// Range 透传（断点续传）
 	if rng := r.Header.Get("Range"); rng != "" {
 		req.Header.Set("Range", rng)
+	}
+	// HF 模型：注入 Authorization: Bearer <token>（gated 模型需要）
+	if rule.Kind == "huggingface_models" {
+		if h.GetHuggingFaceToken != nil {
+			if tok := strings.TrimSpace(h.GetHuggingFaceToken()); tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+		}
 	}
 
 	resp, err := h.HTTP.Do(req)

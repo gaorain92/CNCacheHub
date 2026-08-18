@@ -26,6 +26,9 @@ const (
 	SettingCacheTotalGB     = "cache_total_gb"       // 数字
 	SettingCleanupTriggerPct = "cleanup_trigger_pct" // 数字（百分比 0-100）
 	SettingCleanupTargetPct  = "cleanup_target_pct"  // 数字（百分比 0-100）
+	// Hugging Face 模型下载（PRD §9.4.5 扩展）
+	// 用于 huggingface_models 类型 resource rule 的 Authorization: Bearer 注入
+	SettingHuggingFaceToken = "huggingface_token"
 	// 代理访问控制（P2#4 / PRD §9.7.2）
 	SettingAccessControlEnabled        = "access_control_enabled"         // "true"/"false"
 	SettingAccessControlToken          = "access_control_token"           // 任意字符串（启用时为空就视为 disabled）

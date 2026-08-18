@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -254,7 +255,7 @@ func run() error {
 		StartTime:           cfg.StartTime,
 		Build:               build,
 		ProxyHandler:        proxyHandler,
-		ResourceHandler:     proxy.NewResourceHandler(db, fs, int64(maxMB)*1024*1024, logpkg.L()),
+		ResourceHandler:     newResourceHandlerWithHFToken(db, fs, int64(maxMB)*1024*1024, logpkg.L()),
 		AccessLogWriter:     &accessLogBridge{db: db},
 		GetUpstreams:        makeUpstreamsAdapter(db),
 		GetDashboardSummary: makeDashboardAdapter(db),
@@ -551,6 +552,8 @@ func makeGetSettingsAdapter(db *storage.DB) func(ctx context.Context) (api.Syste
 				out.PublicBaseURL = s.Value
 			case storage.SettingLogRetentionDays:
 				out.LogRetentionDays = atoiSafe(s.Value, 30)
+			case storage.SettingHuggingFaceToken:
+				out.HuggingFaceTokenSet = s.Value != ""
 			}
 			if s.UpdatedAt > latest {
 				latest = s.UpdatedAt
@@ -594,6 +597,17 @@ func makeUpdateSettingsAdapter(db *storage.DB, fs *cache.FileStore, onUpdate fun
 		}
 		if patch.LogRetentionDays != nil {
 			kvs[storage.SettingLogRetentionDays] = itoa(*patch.LogRetentionDays)
+		}
+		if patch.HuggingFaceToken != nil {
+			// 空串视为清空
+			if strings.TrimSpace(*patch.HuggingFaceToken) == "" {
+				kvs[storage.SettingHuggingFaceToken] = ""
+			} else {
+				kvs[storage.SettingHuggingFaceToken] = strings.TrimSpace(*patch.HuggingFaceToken)
+			}
+		}
+		if patch.ClearHuggingFaceToken {
+			kvs[storage.SettingHuggingFaceToken] = ""
 		}
 		if err := db.SetMany(ctx, kvs, userID); err != nil {
 			return api.SystemSettings{}, err
@@ -823,6 +837,13 @@ func summarizePatch(p api.SettingsPatch) string {
 	}
 	if p.LogRetentionDays != nil {
 		parts = append(parts, "log_retention_days="+itoa(*p.LogRetentionDays))
+	}
+	if p.HuggingFaceToken != nil {
+		// 审计日志不写明文 token
+		parts = append(parts, "huggingface_token=<redacted len="+itoa(len(strings.TrimSpace(*p.HuggingFaceToken)))+">")
+	}
+	if p.ClearHuggingFaceToken {
+		parts = append(parts, "huggingface_token=<cleared>")
 	}
 	if len(parts) == 0 {
 		return "noop"
@@ -1499,4 +1520,20 @@ func registryHostname(u string) string {
 		return "unknown"
 	}
 	return u
+}
+
+// newResourceHandlerWithHFToken 构造 ResourceHandler 并注入 HF token getter。
+//
+// token 从 system_settings.huggingface_token 读（resource handler 自己每次拉最新值），
+// 这样 UI 改 token 后下次请求即生效，无需重启。
+func newResourceHandlerWithHFToken(db *storage.DB, fs *cache.FileStore, maxObjectSize int64, logger *slog.Logger) *proxy.ResourceHandler {
+	h := proxy.NewResourceHandler(db, fs, maxObjectSize, logger)
+	h.GetHuggingFaceToken = func() string {
+		setting, err := db.GetSetting(context.Background(), storage.SettingHuggingFaceToken)
+		if err != nil || setting == nil {
+			return ""
+		}
+		return setting.Value
+	}
+	return h
 }

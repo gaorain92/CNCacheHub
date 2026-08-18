@@ -107,6 +107,21 @@ export interface SettingsPatch {
   cleanupTargetPct?: number
   publicBaseUrl?: string
   logRetentionDays?: number
+  huggingfaceToken?: string
+  clearHuggingFaceToken?: boolean
+}
+
+export interface SystemSettings {
+  smallVpsOpt: boolean
+  reserveSpaceGb: number
+  maxObjectSizeMb: number
+  cacheTotalGb: number
+  cleanupTriggerPct: number
+  cleanupTargetPct: number
+  publicBaseUrl: string
+  logRetentionDays: number
+  huggingfaceTokenSet: boolean
+  updatedAt: number
 }
 
 // ============================================================================
@@ -376,7 +391,7 @@ export interface DiagFullReport {
 export interface ResourceRule {
   id: number
   name: string
-  kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
+  kind: 'github' | 'playwright' | 'huggingface' | 'huggingface_models' | 'terraform' | 'custom'
   upstreamUrl: string
   pathPattern: string // P2#1 glob；默认 "*"
   defaultTtlSeconds: number
@@ -412,7 +427,7 @@ export interface ResourceCacheResponse {
 
 export interface ResourceRuleCreate {
   name: string
-  kind: 'github' | 'playwright' | 'huggingface' | 'terraform' | 'custom'
+  kind: 'github' | 'playwright' | 'huggingface' | 'huggingface_models' | 'terraform' | 'custom'
   upstreamUrl: string
   defaultTtlSeconds?: number
   description?: string
