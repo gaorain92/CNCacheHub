@@ -463,9 +463,11 @@ func TestHandleQuery_Miss_ForwardsToUpstream(t *testing.T) {
 	cfg := newTestConfig(listen, upstream)
 	cfg.DomainRules = []string{"*.example.com"}
 
-	hits := 0
+	// 用 atomic.Int32 防 race：upstream handler 在自己 goroutine 写 hits，
+	// 主测试 goroutine 读 hits — `-race` 模式下不加同步会报 DATA RACE。
+	var hits atomic.Int32
 	cleanup := startTestUpstream(t, upstream, func(w dns.ResponseWriter, r *dns.Msg) {
-		hits++
+		hits.Add(1)
 		resp := new(dns.Msg)
 		resp.SetReply(r)
 		resp.Answer = []dns.RR{&dns.A{
@@ -484,8 +486,8 @@ func TestHandleQuery_Miss_ForwardsToUpstream(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	resp := queryLocal(t, cfg.ListenAddr, "github.com", dns.TypeA)
-	if hits != 1 {
-		t.Errorf("upstream called %d times, want 1", hits)
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream called %d times, want 1", got)
 	}
 	if len(resp.Answer) != 1 {
 		t.Fatalf("expected 1 A record from upstream, got %d", len(resp.Answer))
@@ -504,9 +506,11 @@ func TestHandleQuery_AAAA_ForwardsToUpstream(t *testing.T) {
 	cfg := newTestConfig(listen, upstream)
 	cfg.DomainRules = []string{"*.example.com"} // A 记录会命中
 
-	hits := 0
+	// 用 atomic.Int32 防 race：upstream handler 在自己 goroutine 写 hits，
+	// 主测试 goroutine 读 hits — `-race` 模式下不加同步会报 DATA RACE。
+	var hits atomic.Int32
 	cleanup := startTestUpstream(t, upstream, func(w dns.ResponseWriter, r *dns.Msg) {
-		hits++
+		hits.Add(1)
 		// 必须 SetReply — 客户端靠 Id 匹配 request/response
 		resp := new(dns.Msg).SetReply(r)
 		_ = w.WriteMsg(resp)
@@ -522,8 +526,8 @@ func TestHandleQuery_AAAA_ForwardsToUpstream(t *testing.T) {
 
 	// AAAA 即使匹配白名单也走 upstream（白名单只对 A 生效）
 	_ = queryLocal(t, cfg.ListenAddr, "foo.example.com", dns.TypeAAAA)
-	if hits != 1 {
-		t.Errorf("upstream should be called for AAAA, hits = %d", hits)
+	if got := hits.Load(); got != 1 {
+		t.Errorf("upstream should be called for AAAA, hits = %d", got)
 	}
 }
 

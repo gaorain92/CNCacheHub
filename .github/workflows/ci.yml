@@ -135,6 +135,8 @@ jobs:
         with:
           scandir: ./scripts
           additional_files: install.sh install-systemd.sh
+          # 只 fail 在 error / warning 级别（忽略 info / style — 大量有意图用法）
+          severity: warning
         env:
           # 忽略：
           #   SC1091 — source 路径动态（sourced scripts 在 shellcheck 看不到内容）
