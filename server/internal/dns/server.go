@@ -244,8 +244,9 @@ func (s *Server) replyLocalA(w dns.ResponseWriter, req *dns.Msg) {
 		A:   ip,
 	}
 	resp.Answer = []dns.RR{rr}
-	_ = w.WriteMsg(resp)
+	// 先累加 hit 计数再 WriteMsg — 否则 client 收到响应后立即查 stats 会读 0
 	s.hitQ.Add(1)
+	_ = w.WriteMsg(resp)
 }
 
 // forwardToUpstream 转发到上游 DNS。
@@ -270,8 +271,9 @@ func (s *Server) forwardToUpstream(w dns.ResponseWriter, req *dns.Msg) {
 		s.replyServFail(w, req)
 		return
 	}
-	_ = w.WriteMsg(resp)
+	// 先累加 miss 计数再 WriteMsg — 同 replyLocalA，避免 client 读 stats 的 race
 	s.missQ.Add(1)
+	_ = w.WriteMsg(resp)
 }
 
 func (s *Server) replyRefused(w dns.ResponseWriter, req *dns.Msg) {

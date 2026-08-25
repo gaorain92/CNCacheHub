@@ -357,8 +357,10 @@ func TestPut_ReaderError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTouchAt_NoFile_Errors(t *testing.T) {
-	// TouchAt 是 os.Chtimes 的简单包装，文件不存在时返 ENOENT
-	if err := TouchAt("/nonexistent/path/to/file", time.Time{}); err == nil {
+	// TouchAt 是 os.Chtimes 的简单包装，文件不存在时返 ENOENT。
+	// 注意：linux 上 os.Chtimes 传 time.Time{}（zero value）会被 syscall 解释为
+	// "use current time"，不会返 ENOENT — 用具体时间才能触发路径检查。
+	if err := TouchAt("/nonexistent/path/to/file", time.Now()); err == nil {
 		t.Error("TouchAt on missing file should error")
 	}
 }
