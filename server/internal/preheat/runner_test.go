@@ -709,3 +709,179 @@ func TestMarkTaskError_DirectCall(t *testing.T) {
 		t.Errorf("LastDurationMs = %d, want 250", final.LastDurationMs)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// huggingface_model kind
+// ---------------------------------------------------------------------------
+
+// fakeProxyHFMux 模拟 CNCacheHub 自身的 /r/huggingface-models/<path> 端点。
+// hits 记录访问路径；body 长度 = 响应字节数。
+type fakeProxyHFMux struct {
+	mu        sync.Mutex
+	paths     []string
+	statusFor map[string]int // path → status override
+}
+
+func (f *fakeProxyHFMux) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.paths = append(f.paths, r.URL.Path)
+		if f.statusFor != nil {
+			if st, ok := f.statusFor[r.URL.Path]; ok {
+				w.WriteHeader(st)
+				_, _ = w.Write([]byte("fake error body"))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		// 给个真实字节，让 bytesAdded > 0
+		body := make([]byte, 1024)
+		_, _ = w.Write(body)
+	})
+}
+
+func TestRunItem_HuggingFaceModel_Success(t *testing.T) {
+	t.Parallel()
+	// 启动一个 httptest server 当本地 proxy
+	mux := &fakeProxyHFMux{statusFor: map[string]int{}}
+	srv := httptest.NewServer(mux.Handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	db, err := storage.Open(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	_, _ = db.CreateUser(context.Background(), "tester", "x", true)
+	r := NewRunner(db, srv.URL, logpkg.L())
+
+	target := "Qwen/Qwen2.5-1.5B-Instruct|main|config.json"
+	bytes, err := r.runHuggingFaceModelFile(context.Background(), target)
+	if err != nil {
+		t.Fatalf("runHuggingFaceModelFile: %v", err)
+	}
+	if bytes != 1024 {
+		t.Errorf("bytes = %d, want 1024", bytes)
+	}
+	mux.mu.Lock()
+	defer mux.mu.Unlock()
+	if len(mux.paths) != 1 {
+		t.Fatalf("proxy hits = %d, want 1", len(mux.paths))
+	}
+	want := "/r/huggingface-models/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/config.json"
+	if mux.paths[0] != want {
+		t.Errorf("path = %q, want %q", mux.paths[0], want)
+	}
+}
+
+func TestRunItem_HuggingFaceModel_DefaultsRevisionToMain(t *testing.T) {
+	t.Parallel()
+	mux := &fakeProxyHFMux{statusFor: map[string]int{}}
+	srv := httptest.NewServer(mux.Handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	db, _ := storage.Open(context.Background(), dir)
+	t.Cleanup(func() { _ = db.Close() })
+	_, _ = db.CreateUser(context.Background(), "tester", "x", true)
+	r := NewRunner(db, srv.URL, logpkg.L())
+
+	// revision 段为空 → 默认 main
+	target := "Qwen/Qwen2.5-1.5B-Instruct||config.json"
+	if _, err := r.runHuggingFaceModelFile(context.Background(), target); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	mux.mu.Lock()
+	defer mux.mu.Unlock()
+	if mux.paths[0] != "/r/huggingface-models/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/config.json" {
+		t.Errorf("path = %q, want main fallback", mux.paths[0])
+	}
+}
+
+func TestRunItem_HuggingFaceModel_401_Hint(t *testing.T) {
+	t.Parallel()
+	mux := &fakeProxyHFMux{statusFor: map[string]int{
+		"/r/huggingface-models/gated/repo/resolve/main/config.json": http.StatusUnauthorized,
+	}}
+	srv := httptest.NewServer(mux.Handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	db, _ := storage.Open(context.Background(), dir)
+	t.Cleanup(func() { _ = db.Close() })
+	_, _ = db.CreateUser(context.Background(), "tester", "x", true)
+	r := NewRunner(db, srv.URL, logpkg.L())
+
+	_, err := r.runHuggingFaceModelFile(context.Background(), "gated/repo|main|config.json")
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+	if !strings.Contains(err.Error(), "huggingface_token") {
+		t.Errorf("error should mention huggingface_token, got: %v", err)
+	}
+}
+
+func TestRunItem_HuggingFaceModel_BadTarget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, _ := storage.Open(context.Background(), dir)
+	t.Cleanup(func() { _ = db.Close() })
+	_, _ = db.CreateUser(context.Background(), "tester", "x", true)
+	r := NewRunner(db, "http://unused", logpkg.L())
+
+	cases := []string{
+		"only-one-segment",                                // < 3 段
+		"|main|config.json",                              // modelID 空
+		"foo/bar||",                                      // filename 空
+	}
+	for _, c := range cases {
+		t.Run(c, func(t *testing.T) {
+			_, err := r.runHuggingFaceModelFile(context.Background(), c)
+			if err == nil {
+				t.Errorf("target %q should error", c)
+			}
+		})
+	}
+}
+
+func TestRunTask_HuggingFaceModel_EndToEnd(t *testing.T) {
+	t.Parallel()
+	mux := &fakeProxyHFMux{statusFor: map[string]int{}}
+	srv := httptest.NewServer(mux.Handler())
+	defer srv.Close()
+
+	dir := t.TempDir()
+	db, _ := storage.Open(context.Background(), dir)
+	t.Cleanup(func() { _ = db.Close() })
+	_, _ = db.CreateUser(context.Background(), "tester", "x", true)
+	r := NewRunner(db, srv.URL, logpkg.L())
+
+	ctx := context.Background()
+	task, err := db.CreatePreheatTask(ctx, storage.PreheatTask{
+		Name:    "hf: foo/bar",
+		Kind:    storage.PreheatKindHuggingFaceModel,
+		Targets: []string{
+			"foo/bar|main|config.json",
+			"foo/bar|main|model.safetensors",
+		},
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePreheatTask: %v", err)
+	}
+	if err := r.RunTask(ctx, task.ID); err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if !waitForTaskStatus(t, db, task.ID, storage.PreheatStatusDone, 3*time.Second) {
+		t.Fatal("task should be done")
+	}
+	final, _ := db.GetPreheatTask(ctx, task.ID)
+	if final.ProgressDone != 2 {
+		t.Errorf("ProgressDone = %d, want 2", final.ProgressDone)
+	}
+	if final.ProgressBytes < 2048 {
+		t.Errorf("ProgressBytes = %d, want >= 2048", final.ProgressBytes)
+	}
+}

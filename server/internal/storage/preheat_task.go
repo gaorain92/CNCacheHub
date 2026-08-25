@@ -11,9 +11,10 @@ import (
 
 // PreheatTaskKind 是任务 kind 字面量。
 const (
-	PreheatKindDocker   = "docker"
-	PreheatKindSteam    = "steam"
-	PreheatKindResource = "resource"
+	PreheatKindDocker           = "docker"
+	PreheatKindSteam            = "steam"
+	PreheatKindResource         = "resource"
+	PreheatKindHuggingFaceModel = "huggingface_model" // HF 全量预热（按 model id 拉全部文件）
 )
 
 // PreheatTaskStatus 是任务状态字面量。

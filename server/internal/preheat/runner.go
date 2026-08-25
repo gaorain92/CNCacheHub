@@ -165,6 +165,8 @@ func (r *Runner) runItem(ctx context.Context, task storage.PreheatTask, item sto
 		err = r.runSteamAppID(ctx, item.Target)
 	case storage.PreheatKindResource:
 		err = errors.New("resource preheat not yet implemented (planned P2)")
+	case storage.PreheatKindHuggingFaceModel:
+		bytesAdded, err = r.runHuggingFaceModelFile(ctx, item.Target)
 	default:
 		err = fmt.Errorf("unknown kind: %s", task.Kind)
 	}
@@ -363,6 +365,50 @@ func dockerPathFor(registry, name, kind, ref string) string {
 		return "/v2/" + name + "/" + kind + "/" + ref
 	}
 	return "/v2/" + registry + "/" + name + "/" + kind + "/" + ref
+}
+
+// runHuggingFaceModelFile 拉一个 HF 模型文件（走 CNCacheHub 自身的
+// /r/huggingface-models/<path> 触发缓存 + 自动注入 Authorization）。
+//
+// target 形如 "<model_id>|<revision>|<filename>"（3 段），由创建 preheat
+// task 时从 HF tree API 解析后注入。空 revision 走 "main"。
+//
+// 命中：返回落盘字节数；任何 HTTP 错误都视为 item 失败（不致命）。
+func (r *Runner) runHuggingFaceModelFile(ctx context.Context, target string) (int64, error) {
+	parts := strings.SplitN(target, "|", 3)
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("huggingface_model target must be '<model_id>|<revision>|<filename>', got %q", target)
+	}
+	modelID, revision, filename := parts[0], parts[1], parts[2]
+	if strings.TrimSpace(modelID) == "" || strings.TrimSpace(filename) == "" {
+		return 0, fmt.Errorf("huggingface_model target missing model_id or filename: %q", target)
+	}
+	if strings.TrimSpace(revision) == "" {
+		revision = "main"
+	}
+	// rule name "huggingface-models" 在 hf_handlers 里硬约定，proxy 会自动注入 Authorization
+	restPath := modelID + "/resolve/" + revision + "/" + filename
+	url := r.CNCHBaseURL + "/r/huggingface-models/" + restPath
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := r.HTTPClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("get %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// 命中 401 时给个明确提示：缺 HF token / gated 模型
+		hint := ""
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			hint = "（gated 模型？检查 settings.huggingface_token）"
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return 0, fmt.Errorf("HTTP %d %s: %s", resp.StatusCode, hint, string(body))
+	}
+	n, _ := io.Copy(io.Discard, resp.Body)
+	return n, nil
 }
 
 // extractDigests 解析 manifest body 拿所有 blob digests。

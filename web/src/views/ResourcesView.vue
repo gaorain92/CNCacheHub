@@ -10,7 +10,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useResourcesStore } from '@/stores/resources'
 import { useAuthStore } from '@/stores/auth'
 import { listResourceTemplates } from '@/api/resources'
-import { api } from '@/api/client'
 import type { ResourceTemplate } from '@/types/api'
 
 const resources = useResourcesStore()
@@ -39,7 +38,6 @@ const form = ref({
 
 onMounted(async () => {
   if (resources.rules.length === 0) await resources.fetch()
-  void loadHuggingFaceTokenStatus()
 })
 
 function toggleExpand(id: number): void {
@@ -235,40 +233,6 @@ function previewUrl(name: string, samplePath: string): string {
   return `${publicBaseUrl.value}/r/${name}/${samplePath}`
 }
 
-// ---- HF 模型下载 URL 生成器 ----
-const hfModel = ref('Qwen/Qwen2.5-1.5B-Instruct')
-const hfRevision = ref('main')
-const hfFilename = ref('config.json')
-const hfTokenConfigured = ref<boolean | null>(null) // null=unknown, true=set, false=unset
-
-async function loadHuggingFaceTokenStatus(): Promise<void> {
-  try {
-    const res = await api.get<Record<string, unknown>>('/settings')
-    const v = (res.data as Record<string, unknown>)?.huggingfaceToken
-    // 后端 /settings 不直接返 token 值（也不该），但能拿到 *是否设了*
-    // 实际：API 直接返所有 settings — 我们用 key 是否存在 + 长度 > 0 判断
-    hfTokenConfigured.value = typeof v === 'string' && v.length > 0
-  } catch {
-    hfTokenConfigured.value = null
-  }
-}
-
-const hfDownloadUrl = computed(() => {
-  if (!hfModel.value.trim()) return ''
-  const path = `${hfModel.value.trim()}/resolve/${hfRevision.value || 'main'}/${hfFilename.value || 'config.json'}`
-  return `${publicBaseUrl.value}/r/huggingface-models/${path}`
-})
-
-const hfCurlCommand = computed(() => {
-  if (!hfModel.value.trim()) return ''
-  // 展示两行：普通 + 断点续传
-  return [
-    `curl -L -o "${hfFilename.value || 'model'}" "${hfDownloadUrl.value}"`,
-    `# 断点续传（Range 透传，hf-models 自动 follow 302 → cdn-lfs）:`,
-    `curl -L -C - -o "${hfFilename.value || 'model'}" "${hfDownloadUrl.value}"`,
-  ].join('\n')
-})
-
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
@@ -314,52 +278,19 @@ function formatBytes(n: number): string {
       </div>
     </div>
 
-    <!-- HuggingFace 模型下载生成器 -->
-    <div class="rounded-2xl border border-white/[.08] bg-black/20 p-6 space-y-4">
-      <div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="flex items-center gap-2">
-          <span class="text-2xl">🧠</span>
-          <h3 class="text-base font-semibold">HuggingFace 模型下载</h3>
-          <el-tag size="small" type="warning" effect="plain">v0.1.0+</el-tag>
-        </div>
-        <div class="flex items-center gap-2 text-xs">
-          <span v-if="hfTokenConfigured === true" class="text-mint">● HF token 已配置（gated 模型可用）</span>
-          <span v-else-if="hfTokenConfigured === false" class="text-amber-400">● HF token 未配置（gated 模型会 401）</span>
-          <router-link to="/settings" class="text-sky-400 hover:underline">设置</router-link>
-        </div>
+    <!-- HuggingFace 模型下载生成器（v0.2 起迁到独立菜单 HuggingFaceView） -->
+    <div class="rounded-2xl border border-white/[.08] bg-black/20 p-4 text-sm flex items-center gap-3">
+      <span class="text-xl">🧠</span>
+      <div class="flex-1">
+        <div class="text-slate-200">HuggingFace 模型加速已迁到独立菜单</div>
+        <div class="text-xs text-slate-500">支持按模型 ID 全量下载 + LFS 大文件 + Range 断点续传</div>
       </div>
-      <p class="text-xs text-slate-400 leading-relaxed">
-        输入 HuggingFace 模型 ID，自动生成可下载 URL。支持 LFS 大文件 + Range 断点续传 + 302 重定向跟随。
-        gated 模型（Llama / Qwen 等）需要在
-        <router-link to="/settings" class="text-sky-400 hover:underline">设置</router-link>
-        页配置 <code class="text-slate-200">huggingface_token</code>。
-      </p>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-        <el-input v-model="hfModel" placeholder="Qwen/Qwen2.5-1.5B-Instruct" clearable>
-          <template #prepend>模型 ID</template>
-        </el-input>
-        <el-input v-model="hfRevision" placeholder="main" clearable>
-          <template #prepend>Revision</template>
-        </el-input>
-        <el-input v-model="hfFilename" placeholder="config.json" clearable>
-          <template #prepend>文件名</template>
-        </el-input>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <div class="rounded-xl bg-white/[.04] p-3">
-          <div class="text-slate-400 mb-1">下载 URL</div>
-          <code class="text-slate-200 break-all">{{ hfDownloadUrl || '—' }}</code>
-        </div>
-        <div class="rounded-xl bg-white/[.04] p-3">
-          <div class="text-slate-400 mb-1">curl 命令</div>
-          <pre class="text-slate-200 whitespace-pre-wrap break-all font-mono">{{ hfCurlCommand || '—' }}</pre>
-        </div>
-      </div>
-      <div class="text-[11px] text-slate-500">
-        提示：浏览器直接访问会触发下载。Python 可用
-        <code class="text-slate-300">huggingface_hub.snapshot_download</code>
-        改 <code class="text-slate-300">endpoint</code> 指向本机即可批量下载整个 model repo。
-      </div>
+      <router-link
+        to="/huggingface"
+        class="rounded-xl bg-mint/20 text-mint px-3 py-1.5 text-xs hover:bg-mint/30 transition"
+      >
+        打开 HuggingFace →
+      </router-link>
     </div>
 
     <!-- rule 列表 -->

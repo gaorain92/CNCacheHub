@@ -77,3 +77,6 @@ tmp/
 temp/
 server/server/
 server/cncachehub
+
+# Personal helper scripts (not part of project)
+.scripts/

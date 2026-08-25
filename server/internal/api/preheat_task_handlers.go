@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,16 +43,15 @@ func preheatTaskCreateHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req preheatTaskCreateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		if strings.TrimSpace(req.Name) == "" {
 			writeError(w, http.StatusBadRequest, "invalid_name", "name required")
 			return
 		}
-		if req.Kind != "docker" && req.Kind != "steam" && req.Kind != "resource" {
-			writeError(w, http.StatusBadRequest, "invalid_kind", "kind must be 'docker' | 'steam' | 'resource'")
+		if req.Kind != "docker" && req.Kind != "steam" && req.Kind != "resource" && req.Kind != "huggingface_model" {
+			writeError(w, http.StatusBadRequest, "invalid_kind", "kind must be 'docker' | 'steam' | 'resource' | 'huggingface_model'")
 			return
 		}
 		// 去空 + 去重（trim 后比较）

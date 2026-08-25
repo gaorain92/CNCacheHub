@@ -162,7 +162,9 @@ func (h *ResourceHandler) serveFromUpstream(w http.ResponseWriter, r *http.Reque
 
 	resp, err := h.HTTP.Do(req)
 	if err != nil {
-		http.Error(w, "upstream fetch: "+err.Error(), http.StatusBadGateway)
+		// 不暴露 transport 错误（可能含 DNS / 网络内部信息）
+		h.Log.Warn("resource: upstream do", "err", err.Error(), "rule", rule.Name, "path", restPath)
+		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -280,7 +282,9 @@ func (h *ResourceHandler) serveBypass(w http.ResponseWriter, r *http.Request, ru
 	}
 	req, err := http.NewRequestWithContext(r.Context(), "GET", upstreamURL, nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 不暴露 build error 细节（避免泄漏内部信息）
+		h.Log.Warn("resource bypass: build request", "err", err.Error(), "rule", ruleName, "path", restPath)
+		http.Error(w, "bad upstream request", http.StatusBadGateway)
 		return
 	}
 	if ua := r.Header.Get("User-Agent"); ua != "" {
@@ -288,7 +292,9 @@ func (h *ResourceHandler) serveBypass(w http.ResponseWriter, r *http.Request, ru
 	}
 	resp, err := h.HTTP.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		// 不暴露 transport 错误细节（可能含上游 URL / 内部 IP / DNS 信息）
+		h.Log.Warn("resource bypass: upstream do", "err", err.Error(), "rule", ruleName, "path", restPath)
+		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

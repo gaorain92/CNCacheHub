@@ -158,6 +158,7 @@ function kindLabel(k: string): string {
   if (k === 'docker') return 'Docker'
   if (k === 'steam') return 'Steam'
   if (k === 'resource') return 'Resource'
+  if (k === 'huggingface_model') return 'HF 模型'
   return k
 }
 

@@ -12,6 +12,7 @@ import {
   DataLine,
   List,
   SetUp,
+  ChatLineRound,
 } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 
@@ -38,6 +39,7 @@ const items: NavItem[] = [
   { name: 'diagnostics', path: '/diagnostics', label: '诊断中心', icon: FirstAidKit },
   { name: 'cache', path: '/cache', label: '缓存管理', icon: DataLine },
   { name: 'resources', path: '/resources', label: '资源加速', icon: FolderOpened },
+  { name: 'huggingface', path: '/huggingface', label: 'HuggingFace', icon: ChatLineRound, badge: '新' },
   { name: 'logs', path: '/logs', label: '请求日志', icon: List },
   { name: 'settings', path: '/settings', label: '系统设置', icon: SetUp },
 ]

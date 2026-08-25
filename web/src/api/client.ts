@@ -33,8 +33,17 @@ api.interceptors.response.use(
       error.message ??
       '请求失败，请稍后重试'
 
-    // 401 → 触发全局跳登录（除 /api/auth/login 自身外）
-    if (status === 401 && onUnauthorized && !error.config?.url?.includes('/auth/login')) {
+    // 401 → 触发全局跳登录。但只对"真正的 session 失效" code 触发：
+    //   unauthorized / session_expired / user_missing / login_required
+    // 不在白名单里的 401（理论上不该有，但防一手）不强制跳，避免误把
+    // 业务级 401 当 session 问题。
+    const authCodes = new Set(['unauthorized', 'session_expired', 'user_missing', 'login_required'])
+    if (
+      status === 401 &&
+      onUnauthorized &&
+      !error.config?.url?.includes('/auth/login') &&
+      authCodes.has(code)
+    ) {
       try {
         onUnauthorized()
       } catch {

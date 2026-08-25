@@ -313,7 +313,7 @@ export interface PreheatResponse {
 export interface PreheatTask {
   id: number
   name: string
-  kind: 'docker' | 'steam' | 'resource'
+  kind: 'docker' | 'steam' | 'resource' | 'huggingface_model'
   targets: string[]
   status: 'pending' | 'running' | 'done' | 'error' | 'canceled'
   progressTotal: number
@@ -354,7 +354,7 @@ export interface PreheatItemResponse {
 
 export interface PreheatTaskCreate {
   name: string
-  kind: 'docker' | 'steam' | 'resource'
+  kind: 'docker' | 'steam' | 'resource' | 'huggingface_model'
   targets: string[]
   cronExpression?: string
   maxRetries?: number
@@ -455,4 +455,41 @@ export interface ResourceTemplate {
 export interface ResourceTemplateResponse {
   items: ResourceTemplate[]
   total: number
+}
+
+// === HuggingFace 模型加速（独立菜单） ===
+
+export interface HuggingFaceTreeFile {
+  type: 'file' | 'directory' | string
+  path: string
+  size?: number
+  oid?: string
+}
+
+export interface HuggingFaceTreeResponse {
+  modelId: string
+  revision: string
+  files: HuggingFaceTreeFile[]
+  total: number
+}
+
+export interface HuggingFacePreheatRequest {
+  modelId: string
+  revision?: string
+  patterns?: string[]
+  maxFiles?: number
+  name?: string
+  force?: boolean // 绕过 cache cap 检查
+}
+
+export interface HuggingFacePreheatResponse {
+  task: PreheatTask
+  totalFiles: number
+  filteredFiles: number
+  skippedFiles: number
+  truncated: boolean
+  bytesTotal: number
+  refused?: boolean // true = 因 cache cap 拒绝
+  refusedWhy?: string
+  cacheCapGb?: number
 }

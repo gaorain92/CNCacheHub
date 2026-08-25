@@ -73,6 +73,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '资源加速中心' },
   },
   {
+    path: '/huggingface',
+    name: 'huggingface',
+    component: () => import('@/views/HuggingFaceView.vue'),
+    meta: { title: 'HuggingFace 模型' },
+  },
+  {
     path: '/logs',
     name: 'logs',
     component: () => import('@/views/LogsView.vue'),
