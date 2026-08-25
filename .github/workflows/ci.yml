@@ -46,7 +46,7 @@ jobs:
       - name: go test (with coverage)
         working-directory: server
         run: |
-          GOTOOLCHAIN=local go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
+          GOTOOLCHAIN=local go test -count=1 -race -timeout 10m -coverprofile=coverage.out -covermode=atomic ./...
           go tool cover -func=coverage.out | tail -1
 
       - name: go build
@@ -117,8 +117,8 @@ jobs:
           file: Dockerfile
           push: false
           tags: cncachehub-server:ci-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 不开 cache-from/cache-to: GHA scope / token 权限可能不够，
+          # alpine base 体积小，rebuild 也就 1-2 分钟，cache 价值不大。
 
   # ---------------------------------------------------------------------------
   # Shell 脚本 lint（install.sh / install-systemd.sh / install-online.sh）
