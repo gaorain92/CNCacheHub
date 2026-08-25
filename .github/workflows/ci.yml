@@ -46,7 +46,10 @@ jobs:
       - name: go test (with coverage)
         working-directory: server
         run: |
-          GOTOOLCHAIN=local go test -count=1 -race -timeout 10m -coverprofile=coverage.out -covermode=atomic ./...
+          # -v 配合 tee 把详细输出留到 log；先 fail-fast（不带 -race）看代码层错误，
+          # 失败立即返非零不跑后面步骤。
+          set -o pipefail
+          GOTOOLCHAIN=local go test -count=1 -race -timeout 10m -v -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee /tmp/gotest.log | tail -200
           go tool cover -func=coverage.out | tail -1
 
       - name: go build
@@ -135,8 +138,9 @@ jobs:
         with:
           scandir: ./scripts
           additional_files: install.sh install-systemd.sh
-          # 只 fail 在 error / warning 级别（忽略 info / style — 大量有意图用法）
-          severity: warning
+          # 只 fail 在 error 级别（warning / info / style 是大量有意图用法，
+          # 不应该 fail CI；真正可能出 bug 的靠 -e 列表里的 SC 码挡）
+          severity: error
         env:
           # 忽略：
           #   SC1091 — source 路径动态（sourced scripts 在 shellcheck 看不到内容）
