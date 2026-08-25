@@ -110,18 +110,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build server image
-        uses: docker/build-push-action@v6
-        with:
-          context: server
-          file: Dockerfile
-          push: false
-          tags: cncachehub-server:ci-${{ github.sha }}
-          # 不开 cache-from/cache-to: GHA scope / token 权限可能不够，
-          # alpine base 体积小，rebuild 也就 1-2 分钟，cache 价值不大。
+        # GHA ubuntu-latest runner 已经预装 buildx，不用单独 setup
+        # （之前 setup-buildx-action@v3 + buildx-action@v6 配合有兼容问题，
+        # 1 秒就挂；直接用 docker build 更稳）
+        run: |
+          docker build -t cncachehub-server:ci-${{ github.sha }} -f Dockerfile .
+        working-directory: server
 
   # ---------------------------------------------------------------------------
   # Shell 脚本 lint（install.sh / install-systemd.sh / install-online.sh）
