@@ -100,8 +100,9 @@ func (d *DB) ListCacheEntries(ctx context.Context, page, pageSize int, query str
 	args := []any{}
 	if query != "" {
 		// 简单 LIKE：匹配 repository / digest / registry 任一。
-		where = "WHERE repository LIKE ? OR digest LIKE ? OR registry LIKE ?"
-		like := "%" + query + "%"
+		// 用 escapeLike 转义用户输入里的 % _ \，避免搜索 "%" 匹配整表。
+		where = "WHERE repository LIKE ? ESCAPE '\\' OR digest LIKE ? ESCAPE '\\' OR registry LIKE ? ESCAPE '\\'"
+		like := likePattern(query, maxSearchQueryLen)
 		args = append(args, like, like, like)
 	}
 

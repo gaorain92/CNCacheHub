@@ -6,12 +6,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/cncachehub/server/internal/cache"
+	"github.com/cncachehub/server/internal/clientip"
 	logpkg "github.com/cncachehub/server/internal/log"
 	"github.com/cncachehub/server/internal/storage"
 )
@@ -498,18 +498,10 @@ func errString(e error) string {
 	return e.Error()
 }
 
-// clientIP 提取客户端 IP（优先 X-Forwarded-For 第一段，否则 r.RemoteAddr）。
+// clientIP 提取客户端 IP。
+//
+// 走 clientip.Real：只信任 trusted proxy CIDR（loopback / RFC1918）
+// 设置的 X-Forwarded-For / X-Real-IP。直连 :8082 的攻击者无法伪造。
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx > 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	// net.SplitHostPort 同时处理 IPv4 (127.0.0.1:5555) 和 IPv6 ([::1]:5555)。
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return clientip.Real(r)
 }

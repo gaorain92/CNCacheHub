@@ -13,13 +13,12 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/cncachehub/server/internal/clientip"
 	"github.com/cncachehub/server/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -126,8 +125,7 @@ func loginHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req LoginRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		username := strings.TrimSpace(req.Username)
@@ -228,8 +226,7 @@ func changePasswordHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req ChangePasswordRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		if len(req.NewPassword) < 8 {
@@ -286,8 +283,7 @@ func initHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req InitRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		username := strings.TrimSpace(req.Username)
@@ -508,17 +504,9 @@ func sessionTokenFromRequest(r *http.Request) string {
 }
 
 func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.Index(v, ","); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return strings.TrimSpace(v)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	// 安全提取：只信任 trusted proxy（默认 loopback + RFC1918）设置的 XFF。
+	// 直接连到 :8082 的攻击者无法伪造 IP 绕过 rate limit / access control。
+	return clientip.Real(r)
 }
 
 // verifyBcrypt 校验 bcrypt hash vs 明文。

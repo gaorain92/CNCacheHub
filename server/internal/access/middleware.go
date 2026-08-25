@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/cncachehub/server/internal/clientip"
 )
 
 // Config 是访问控制当前配置。值类型，每次 reload 整个替换。
@@ -113,27 +115,13 @@ func Middleware(resolve Resolver) func(http.Handler) http.Handler {
 
 // === helpers ===
 
-// realClientIP 拿真实客户端 IP（先看 X-Forwarded-For / X-Real-IP，最后 RemoteAddr）。
+// realClientIP 拿真实客户端 IP。
 //
-// 简化：信任 proxy header（部署在 nginx / Caddy 后由它们填）。
-// 如果是公网直连，RemoteAddr 是真实 IP。
+// 不再无条件信任 X-Forwarded-For / X-Real-IP：会允许直连 :8082 的攻击者
+// 伪造 IP 绕过 IP 白名单 / rate limit。改用 clientip.Real — 只有当
+// r.RemoteAddr 在 trusted proxy CIDR（loopback / RFC1918）内才信任 header。
 func realClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// 取第一个 IP（最近客户端）
-		if i := strings.Index(xff, ","); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
-	// RemoteAddr 是 "IP:port"
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return clientip.Real(r)
 }
 
 // extractToken 从 header 拿 token。

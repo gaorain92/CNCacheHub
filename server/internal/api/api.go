@@ -8,8 +8,12 @@
 // 设计原则：
 //   - 错误响应统一 {"error":{"code":"...","message":"..."}}；
 //   - 通过 Options 注入依赖（DB / version / startTime），避免包级状态；
-//   - middleware 顺序：RequestID → RealIP → Logger（用 internal/log）→ Recoverer；
+//   - middleware 顺序：RequestID → Logger（用 internal/log）→ Recoverer；
 //   - 端口 / 地址由调用方通过 Server 注入，本包不直接 ListenAndServe。
+//
+// 不要在这里加 chimw.RealIP：chi 默认会无条件信任 X-Forwarded-For 头覆盖
+// r.RemoteAddr，会让攻击者绕过 clientip.Real() 的 trusted proxy 检查。
+// IP 提取统一走 internal/clientip。
 package api
 
 import (
@@ -101,6 +105,9 @@ type Options struct {
 	ProxyHandler http.Handler
 	// ResourceHandler 处理 /r/* 资源加速反代（PRD §9.4）；nil 时 /r/* 返回 503。
 	ResourceHandler http.Handler
+	// HFMirrorHandler 处理 /hf/* HuggingFace 镜像端点（HF_ENDPOINT 兼容）。
+	// nil 时 /hf/* 返回 503。
+	HFMirrorHandler http.Handler
 	// AccessLogWriter 写访问日志；nil 时不记。
 	AccessLogWriter AccessLogWriter
 	// GetUpstreams 列出 enabled upstreams（api/dashboard 用）。
@@ -171,6 +178,13 @@ type Options struct {
 	DeleteResourceRule       func(ctx context.Context, id int64) error
 	ListResourceCache        func(ctx context.Context, ruleID int64, limit int) ([]storage.ResourceCacheEntry, error)
 	DeleteResourceCacheEntry func(ctx context.Context, id int64) error
+	// GetHuggingFaceToken 返 HF access token（空串 = 未配置）；用于 HF 模型
+	// tree API + gated 模型下载。nil 时不注入 Authorization。
+	GetHuggingFaceToken func() string
+	// FetchHuggingFaceTree 拉 HF 模型 tree API（返回 file 列表）。
+	// main.go 注入真实现（realFetchHuggingFaceTree(GetHuggingFaceToken)）；
+	// 测试可注入 fake。nil 时 handler 返回 503。
+	FetchHuggingFaceTree func(ctx context.Context, modelID, revision string) ([]huggingFaceFile, error)
 	// Prometheus metrics 注入（P2#2）
 	MetricsDB         interface {
 		DashboardSummary(ctx context.Context) (storage.DashboardSummary, error)
@@ -333,8 +347,12 @@ func NewRouter(opts Options) http.Handler {
 	// 注意：自己实现 requestIDMiddleware 而不是用 chimw.RequestID，
 	// 因为后者只把 ID 写进 context，不写到响应头 —— 而我们要支持
 	// 跨服务 trace 时透出 X-Request-Id。
+	//
+	// 不要用 chimw.RealIP：它会无条件用 X-Forwarded-For 覆盖 r.RemoteAddr，
+	// 让 clientip.Real() 的 trusted proxy 检查形同虚设。直连 :8082 的攻击者
+	// 可以伪造 IP 绕过 rate limit / access control / audit log IP 溯源。
+	// IP 提取统一走 internal/clientip.Real。
 	r.Use(requestIDMiddleware())
-	r.Use(chimw.RealIP)
 	r.Use(loggerMiddleware())
 	// 用自己的 recoverer（多打 stack + panic value + request 上下文）
 	r.Use(recovererMiddleware())
@@ -409,6 +427,11 @@ func NewRouter(opts Options) http.Handler {
 		// 资源加速中心（PRD §9.4）
 		r.Get("/resources/rules", resourceRuleListHandler(opts))
 		r.Post("/resources/rules", resourceRuleCreateHandler(opts))
+		// HuggingFace 模型加速（独立菜单）
+		// 用 wildcard "*" 兜底（modelId 含 "/"），handler 内手动拆
+		// path = /api/huggingface/models/<org>/<name>[/...]/tree
+		r.Get("/huggingface/models/*", huggingFaceTreeHandler(opts))
+		r.Post("/huggingface/preheat", huggingFacePreheatHandler(opts))
 		r.Patch("/resources/rules/{id}", resourceRulePatchHandler(opts))
 		r.Delete("/resources/rules/{id}", resourceRuleDeleteHandler(opts))
 		r.Get("/resources/rules/{id}/cache", resourceCacheListHandler(opts))
@@ -448,6 +471,16 @@ func NewRouter(opts Options) http.Handler {
 		r.Get("/v2/*", func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "proxy_disabled", "registry proxy is not configured")
 		})
+	}
+
+	// /hf/* — HuggingFace 镜像端点（HF_ENDPOINT=http://cnch/hf 兼容）
+	if opts.HFMirrorHandler != nil {
+		var hfChain chi.Router = r
+		if opts.AccessControlResolve != nil {
+			hfChain = hfChain.With(access.Middleware(opts.AccessControlResolve))
+		}
+		hfChain.Handle("/hf", opts.HFMirrorHandler)
+		hfChain.Handle("/hf/*", opts.HFMirrorHandler)
 	}
 
 	// 兜底 404。
@@ -533,13 +566,35 @@ func generateRequestID() string {
 	return fmt.Sprintf("%s-%06d", reqIDPrefix, n)
 }
 
-// jsonContentTypeMiddleware 默认所有响应 Content-Type 为 application/json。
-// 注意：仅对未显式设置 Content-Type 的响应生效。
+// jsonContentTypeMiddleware 默认所有响应 Content-Type 为 application/json，
+// 同时加一组基础安全头。
+//
+// 注意：仅对未显式设置 Content-Type 的响应生效（Content-Type 已被 handler
+// 显式设的情况 — 如 diagnostics bundle / file serve — 不会被覆盖）。
+//
+// 安全头：
+//   - X-Content-Type-Options: nosniff   — 防 MIME sniffing
+//   - X-Frame-Options: DENY              — 防 clickjacking（API 永远不应被嵌入 iframe）
+//   - Referrer-Policy: no-referrer       — 防 Referer 泄漏
+//   - Cache-Control: no-store            — 含敏感信息的响应不应被中间缓存
+//
+// 注意：nginx 层也加了这些头（deploy/nginx/cnch.conf），但 server-side
+// 双保险 — 直连 :8082 / 客户端绕过 nginx 时也生效。
 func jsonContentTypeMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
-			ww.Header().Set("Content-Type", "application/json; charset=utf-8")
+			h := ww.Header()
+			// 不覆盖 handler 显式设的 Content-Type（diagnostics bundle / file serve）
+			if h.Get("Content-Type") == "" {
+				h.Set("Content-Type", "application/json; charset=utf-8")
+			}
+			// 安全头 — 幂等，handler 已设也无所谓
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("X-Frame-Options", "DENY")
+			h.Set("Referrer-Policy", "no-referrer")
+			// 不要全局 no-store：registry / 资源下载要可缓存
+			// （下游 handler 自己决定 Cache-Control）
 			next.ServeHTTP(ww, r)
 		})
 	}

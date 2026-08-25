@@ -2,7 +2,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -40,8 +39,7 @@ func settingsPatchHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var patch SettingsPatch
-		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
+		if !decodeJSONBody(w, r, &patch) {
 			return
 		}
 		// 简单校验

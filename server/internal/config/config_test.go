@@ -26,6 +26,7 @@ func clearEnv(t *testing.T) {
 	t.Setenv("CNCH_RESERVE_SPACE_GB", "")
 	t.Setenv("CNCH_MAX_OBJECT_SIZE_MB", "")
 	t.Setenv("CNCH_CACHE_TOTAL_GB", "")
+	t.Setenv("CNCH_TRUSTED_PROXIES", "")
 }
 
 // TestLoad_Defaults 验证全部使用默认值。
@@ -328,5 +329,82 @@ func TestInitLogger_NoLeakPassword(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected to find a 'config loaded' log line, got:\n%s", out)
+	}
+}
+
+// TestLoad_TrustedProxies_Default 验证默认无 env 时 TrustedProxies 为空（clientip 用内置白名单）。
+func TestLoad_TrustedProxies_Default(t *testing.T) {
+	clearEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(c.TrustedProxies) != 0 {
+		t.Errorf("TrustedProxies = %v, want empty (use clientip defaults)", c.TrustedProxies)
+	}
+}
+
+// TestLoad_TrustedProxies_Single 验证单 CIDR。
+func TestLoad_TrustedProxies_Single(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_TRUSTED_PROXIES", "203.0.113.0/24")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(c.TrustedProxies) != 1 || c.TrustedProxies[0] != "203.0.113.0/24" {
+		t.Errorf("TrustedProxies = %v, want [203.0.113.0/24]", c.TrustedProxies)
+	}
+}
+
+// TestLoad_TrustedProxies_CommaList 验证多 CIDR 解析。
+func TestLoad_TrustedProxies_CommaList(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_TRUSTED_PROXIES", "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, ::1/128")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	want := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128"}
+	if len(c.TrustedProxies) != len(want) {
+		t.Fatalf("TrustedProxies len = %d, want %d (%v)", len(c.TrustedProxies), len(want), c.TrustedProxies)
+	}
+	for i, v := range want {
+		if c.TrustedProxies[i] != v {
+			t.Errorf("TrustedProxies[%d] = %q, want %q", i, c.TrustedProxies[i], v)
+		}
+	}
+}
+
+// TestLoad_TrustedProxies_TrimsSpace 验证空白被 trim 掉。
+func TestLoad_TrustedProxies_TrimsSpace(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_TRUSTED_PROXIES", "  10.0.0.0/8 ,  172.16.0.0/12  ")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	want := []string{"10.0.0.0/8", "172.16.0.0/12"}
+	if len(c.TrustedProxies) != 2 {
+		t.Fatalf("TrustedProxies = %v, want %v", c.TrustedProxies, want)
+	}
+	for i, v := range want {
+		if c.TrustedProxies[i] != v {
+			t.Errorf("TrustedProxies[%d] = %q, want %q", i, c.TrustedProxies[i], v)
+		}
+	}
+}
+
+// TestLoad_TrustedProxies_Empty 验证空字符串字段被忽略（不会产生空 CIDR）。
+func TestLoad_TrustedProxies_Empty(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CNCH_TRUSTED_PROXIES", "10.0.0.0/8, ,  ,172.16.0.0/12")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	want := []string{"10.0.0.0/8", "172.16.0.0/12"}
+	if len(c.TrustedProxies) != 2 {
+		t.Errorf("TrustedProxies = %v, want %v (empty entries should be skipped)", c.TrustedProxies, want)
 	}
 }

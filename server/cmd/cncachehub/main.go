@@ -39,6 +39,7 @@ import (
 	"github.com/cncachehub/server/internal/access"
 	"github.com/cncachehub/server/internal/api"
 	"github.com/cncachehub/server/internal/cache"
+	"github.com/cncachehub/server/internal/clientip"
 	"github.com/cncachehub/server/internal/config"
 	"github.com/cncachehub/server/internal/crypto"
 	dnsserver "github.com/cncachehub/server/internal/dns"
@@ -130,6 +131,17 @@ func run() error {
 		"ip_whitelist_count", len(accessGet().IPWhitelist),
 		"loopback_bypass", accessGet().LoopbackBypass,
 	)
+
+	// 3c.b 初始化 trusted proxy CIDR（clientip 包）。
+	// 配置来源：CNCH_TRUSTED_PROXIES（逗号分隔 CIDR）。
+	// 影响：X-Forwarded-For / X-Real-IP header 是否被信任（不信任的来源会忽略，
+	// 防止直连 :8082 的攻击者伪造 IP 绕过 rate limit / access control）。
+	if len(cfg.TrustedProxies) > 0 {
+		clientip.SetTrustedProxies(cfg.TrustedProxies)
+		logpkg.Info("trusted proxies configured", "cidrs", cfg.TrustedProxies, "source", "CNCH_TRUSTED_PROXIES")
+	} else {
+		logpkg.Info("trusted proxies using defaults", "cidrs", "loopback+RFC1918", "override_via", "CNCH_TRUSTED_PROXIES env var")
+	}
 
 	// 3d. 公开 Base URL 解析器（client config 生成器用）。
 	// 启动时从 DB 读一次；admin 通过 PATCH /api/settings 改值后 reload。
@@ -256,6 +268,9 @@ func run() error {
 		Build:               build,
 		ProxyHandler:        proxyHandler,
 		ResourceHandler:     newResourceHandlerWithHFToken(db, fs, int64(maxMB)*1024*1024, logpkg.L()),
+		HFMirrorHandler:     proxy.NewHFMirrorHandler(newResourceHandlerWithHFToken(db, fs, int64(maxMB)*1024*1024, logpkg.L()), hfTokenGetter(db), logpkg.L()),
+		GetHuggingFaceToken: hfTokenGetter(db),
+		FetchHuggingFaceTree: api.RealFetchHuggingFaceTree(hfTokenGetter(db)),
 		AccessLogWriter:     &accessLogBridge{db: db},
 		GetUpstreams:        makeUpstreamsAdapter(db),
 		GetDashboardSummary: makeDashboardAdapter(db),
@@ -1528,12 +1543,18 @@ func registryHostname(u string) string {
 // 这样 UI 改 token 后下次请求即生效，无需重启。
 func newResourceHandlerWithHFToken(db *storage.DB, fs *cache.FileStore, maxObjectSize int64, logger *slog.Logger) *proxy.ResourceHandler {
 	h := proxy.NewResourceHandler(db, fs, maxObjectSize, logger)
-	h.GetHuggingFaceToken = func() string {
+	h.GetHuggingFaceToken = hfTokenGetter(db)
+	return h
+}
+
+// hfTokenGetter 返回一个 closure，从 system_settings 读最新 HF token。
+// 用于 API 层（huggingface_handlers）+ proxy.ResourceHandler，行为一致。
+func hfTokenGetter(db *storage.DB) func() string {
+	return func() string {
 		setting, err := db.GetSetting(context.Background(), storage.SettingHuggingFaceToken)
 		if err != nil || setting == nil {
 			return ""
 		}
 		return setting.Value
 	}
-	return h
 }

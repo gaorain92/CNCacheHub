@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,8 +48,7 @@ func resourceRuleCreateHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req resourceRuleCreateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		if strings.TrimSpace(req.Name) == "" {
@@ -96,8 +94,7 @@ func resourceRulePatchHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req resourceRulePatchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		patch := storage.ResourceRulePatch{

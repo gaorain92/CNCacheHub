@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -63,8 +62,7 @@ func steamAppIDCreateHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req steamAppIDCreateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.AppID <= 0 {
@@ -106,8 +104,7 @@ func steamAppIDPatchHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req steamAppIDPatchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		if req.LoginType != nil && *req.LoginType != "anonymous" && *req.LoginType != "account" {

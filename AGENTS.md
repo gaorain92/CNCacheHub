@@ -54,6 +54,7 @@
 ├── deploy/                # 部署脚本 + 生产 docker-compose + Caddy 反代配置（hardened）
 ├── scripts/
 │   ├── install.sh         # 主安装脚本（init / update / uninstall）— 3 模式 × 3 runtime × 3 source × 2 location
+│   ├── install-online.sh  # 一键安装包装（curl | bash 友好，参照 nezha.sh 风格）
 │   └── install-systemd.sh # systemd 模式专用的 binary / web / unit / nginx 子脚本
 └── prototype/             # 高保真 HTML 原型（不是产品代码，仅供设计参考）
 ```
@@ -159,8 +160,30 @@ CNCacheHub 支持两种部署模式（互斥，二选一）：
 | 安装 | `install.sh init --runtime=docker` | `install.sh init --runtime=systemd` |
 | 升级 | `install.sh update` | `install.sh update` |
 | 数据目录 | `/var/lib/cncachehub/data` | `/var/lib/cncachehub/data` |
+| 一键 | `curl ... \| sudo bash`（见 install-online.sh） | `curl ... \| sudo bash`（推荐 systemd） |
 
 详细对比见 `docs/deploy-modes.md`。
+
+### 4.5.1 一键安装（curl | bash）
+
+最简部署方式，参照 nezha.sh 风格：
+
+```bash
+# 国际
+curl -L https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/install-online.sh | sudo bash
+
+# 国内（gitee 镜像）
+curl -L https://gitee.com/cncachehub/cncachehub/raw/main/scripts/install-online.sh | sudo CN=true bash
+```
+
+`install-online.sh` 会自动：
+- 检测 arch / init system / CN
+- 拉 `install.sh` + `install-systemd.sh` 到 tmp
+- 调 `install.sh init --mode=express --runtime=auto` 做实际部署
+- 健康检查后调 `POST /api/auth/init` 创建 admin
+- 打印 access URL + 凭据
+
+环境变量（覆盖默认）：`CNCH_ADMIN_USER` / `CNCH_ADMIN_PASSWORD` / `CNCH_HTTP_PORT` / `CNCH_DATA_DIR` / `CNCH_RUNTIME=systemd|docker` / `CN=true`。
 
 ### 4.6 手动部署到测试机（不走 install.sh）
 
@@ -251,8 +274,22 @@ curl http://<ip>/api/version
 8. **容器/进程加固**（任选其一即可，**不可同时缺**）：
    - docker: `cap_drop: [ALL]` + 必要 `cap_add` + `read_only: true` + `no-new-privileges: true` + mem/pids limit
    - systemd: `NoNewPrivileges=true` + `ProtectSystem=strict` + `ReadWritePaths=` + `MemoryDenyWriteExecute=true` + `SystemCallFilter=@system-service` + `MemoryMax=512M`
-9. **安全头**（nginx / Caddy 必加）：`X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`、CSP、`server_tokens off`
+9. **安全头**（nginx / Caddy 必加）：`X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`、CSP、`server_tokens off`。
+   server-side middleware 也会加 `X-Content-Type-Options: nosniff` / `X-Frame-Options: DENY` /
+   `Referrer-Policy: no-referrer` 作为双保险（直连 :8082 时也生效）。
 10. **/metrics 限制**：只允许 127.0.0.1 + RFC1918 段访问（nginx allowlist），其他 IP 返 404
+11. **客户端 IP 提取**：用 `internal/clientip.Real(r)` — 只信任 trusted proxy CIDR（默认
+    loopback + RFC1918 + link-local + IPv6 ULA）设置的 `X-Forwarded-For` / `X-Real-IP`。
+    **不要用 `chimw.RealIP` 或 `r.RemoteAddr` 直接判断** — 直连 :8082 的攻击者可以伪造
+    `X-Forwarded-For` 绕过 IP 白名单 / rate limit。trusted 列表可用 `CNCH_TRUSTED_PROXIES`
+    env var（逗号分隔 CIDR）覆盖。详见 `server/internal/clientip/`。
+12. **上游代理头过滤**：`copyRequestHeaders` 跳过所有 `X-Forwarded-*` / `X-Real-IP` /
+    `Forwarded` / `CF-Connecting-IP` / `True-Client-IP` / `Fastly-Client-IP` / `X-Client-IP` /
+    `X-Original-Forwarded-For` 等。**不要在新增的 upstream 调用里直接透传客户端 headers** —
+    不然攻击者可以通过 CNCacheHub 伪造 IP 给上游 registry / HF / GitHub。
+13. **JSON body 限制**：所有 API 走 `decodeJSONBody(w, r, &req)`（1 MiB 上限 +
+    `DisallowUnknownFields` + 拒绝 multi-document）。不要在新增 handler 里直接
+    `json.NewDecoder(r.Body).Decode(...)` — 没有大小限制会被 DoS。
 
 ---
 
@@ -285,6 +322,9 @@ curl http://<ip>/api/version
 - ❌ 不要在 heredoc 用单引号包变量（不会展开）— 用双引号
 - ❌ 不要在 commit 写 `[skip ci]`
 - ❌ 不要在 `git push` 时 force-push main
+- ❌ 不要用 `chimw.RealIP`（会无条件信任 X-Forwarded-For，废掉 clientip.Real 的 trusted proxy 检查）
+- ❌ 不要在 handler 里直接 `json.NewDecoder(r.Body).Decode(...)`（没 body 大小限制）— 用 `decodeJSONBody`
+- ❌ 不要在新增的 upstream 请求里透传 `X-Forwarded-*` 等代理头（用户可伪造 IP 给上游）
 
 ---
 

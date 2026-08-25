@@ -8,7 +8,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/cncachehub/server/internal/storage"
@@ -67,8 +66,7 @@ func registryPatchHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var patch RegistryPatch
-		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
+		if !decodeJSONBody(w, r, &patch) {
 			return
 		}
 		// 至少 1 个字段

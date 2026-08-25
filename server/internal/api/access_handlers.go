@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
@@ -89,8 +88,7 @@ func accessControlPutHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var p patch
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &p) {
 			return
 		}
 		acDB, ok := opts.AuthDB.(AccessControlDB)

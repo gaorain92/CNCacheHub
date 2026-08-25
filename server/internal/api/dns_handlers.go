@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -56,8 +55,7 @@ func dnsConfigPatchHandler(opts Options) http.HandlerFunc {
 			return
 		}
 		var req DNSConfigPatchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		if !decodeJSONBody(w, r, &req) {
 			return
 		}
 		// 校验
@@ -153,8 +151,7 @@ func dnsTestHandler(opts Options) http.HandlerFunc {
 			domain = r.URL.Query().Get("domain")
 		} else {
 			var req dnsTestRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			if !decodeJSONBody(w, r, &req) {
 				return
 			}
 			domain = req.Domain

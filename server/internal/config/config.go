@@ -41,6 +41,10 @@ type Config struct {
 	AdminPassword string
 	// ShutdownTimeout graceful shutdown 最大等待时间。
 	ShutdownTimeout time.Duration
+	// TrustedProxies 逗号分隔的 CIDR 列表，标识哪些 RemoteAddr 来源可信任其
+	// 设置的 X-Forwarded-For / X-Real-IP header。空 = 用默认（loopback + RFC1918）。
+	// 部署在公网独立 nginx / Caddy / Cloudflare 后必须显式列出 proxy 的 CIDR/IP。
+	TrustedProxies []string
 	// DBPath 派生字段：${DataDir}/cncachehub.db。
 	DBPath string
 	// StartTime 派生字段：加载配置完成时的本地时间，main 启动后用于算 uptime。
@@ -79,6 +83,8 @@ func Default() Config {
 		LogLevel:         "info",
 		AdminPassword:    "",
 		ShutdownTimeout:  30 * time.Second,
+		// TrustedProxies 默认空 → clientip 用内置白名单（loopback + RFC1918）。
+		// 通过 CNCH_TRUSTED_PROXIES 环境变量覆盖。
 		CacheDir:         "./cache",
 		UpstreamRegistry: "https://registry-1.docker.io",
 		UpstreamTimeout:  60 * time.Second,
@@ -105,6 +111,17 @@ func Load() (Config, error) {
 	c.LogDir = getenv(EnvPrefix+"LOG_DIR", c.LogDir)
 	c.LogLevel = strings.ToLower(getenv(EnvPrefix+"LOG_LEVEL", c.LogLevel))
 	c.AdminPassword = os.Getenv(EnvPrefix + "ADMIN_PASSWORD") // 不设默认值；空 = 未配置
+	// CNCH_TRUSTED_PROXIES：逗号分隔 CIDR 列表，标识哪些 RemoteAddr 来源可信任
+	// 其 X-Forwarded-For / X-Real-IP header（否则忽略 header 防止 IP 伪造）。
+	// 部署在公网独立 nginx / Caddy / Cloudflare 后必须显式列出。
+	// 空 = 用 clientip 包内置默认（loopback + RFC1918）。
+	if raw := os.Getenv(EnvPrefix + "TRUSTED_PROXIES"); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				c.TrustedProxies = append(c.TrustedProxies, p)
+			}
+		}
+	}
 
 	// Shutdown timeout，单位秒，默认 30。
 	if raw := os.Getenv(EnvPrefix + "SHUTDOWN_TIMEOUT_SECONDS"); raw != "" {

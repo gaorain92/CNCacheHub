@@ -158,8 +158,8 @@ func buildLogWhere(f LogFilter) (string, []any) {
 		args = append(args, f.Method)
 	}
 	if f.Path != "" {
-		clauses = append(clauses, "path LIKE ?")
-		args = append(args, "%"+f.Path+"%")
+		clauses = append(clauses, "path LIKE ? ESCAPE '\\'")
+		args = append(args, likePattern(f.Path, maxSearchQueryLen))
 	}
 	if f.Cached != nil {
 		if *f.Cached {

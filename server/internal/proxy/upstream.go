@@ -297,8 +297,18 @@ func isHopByHopHeader(k string) bool {
 var _ = strconv.Itoa
 
 // copyRequestHeaders 从客户端头复制到上游请求头，跳过 hop-by-hop 与代理敏感头。
+//
+// 安全要点（PRD §15 / SECURITY.md）：
+//   - 跳过所有代理 / forwarding 头（X-Forwarded-*、X-Real-IP、Forwarded、
+//     CF-Connecting-IP、True-Client-IP 等），防止攻击者通过 CNCacheHub
+//     伪造客户端 IP 给上游 registry / GitHub / HuggingFace 等。
+//     上游拿到伪造 IP 可能：
+//       1. 把请求当成来自内网（绕过 IP 白名单 / rate limit）
+//       2. 在审计日志里记错 IP（污染上游溯源）
+//       3. 误触发基于 IP 的访问策略
+//   - 跳 X-Forwarded-Proto：上游不应该把 CNCH 当成 TLS 终结点。
 func copyRequestHeaders(dst, src http.Header) {
-	// 黑名单：hop-by-hop 头 + 不应透传给上游的头。
+	// 黑名单：hop-by-hop 头 + 代理转发头 + 不应透传给上游的敏感头。
 	skip := map[string]struct{}{
 		"Connection":          {},
 		"Keep-Alive":          {},
@@ -311,6 +321,21 @@ func copyRequestHeaders(dst, src http.Header) {
 		"Host":                {},
 		"Authorization":       {}, // MVP 不做 token dance；私有镜像留 Phase 1.1
 		"Cookie":              {},
+		// 代理转发头：不让攻击者通过 CNCH 伪造客户端 IP 给上游
+		"X-Forwarded-For":     {},
+		"X-Forwarded-Proto":   {},
+		"X-Forwarded-Host":    {},
+		"X-Forwarded-Port":    {},
+		"X-Forwarded-Scheme":  {},
+		"X-Real-IP":           {},
+		"X-Real-Ip":           {}, // 大小写兼容（部分 CDN 用 X-Real-Ip）
+		"Forwarded":           {},
+		"Client-Ip":           {},
+		"Cf-Connecting-Ip":    {}, // Cloudflare
+		"True-Client-Ip":      {}, // Cloudflare Enterprise / Akamai
+		"Fastly-Client-Ip":    {}, // Fastly
+		"X-Client-Ip":         {}, // Generic
+		"X-Original-Forwarded-For": {},
 	}
 	for k, vs := range src {
 		if _, bad := skip[http.CanonicalHeaderKey(k)]; bad {
