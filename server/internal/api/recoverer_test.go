@@ -36,16 +36,14 @@ func TestRecovererMiddleware_NoPanic(t *testing.T) {
 }
 
 // TestRecovererMiddleware_Recovers 验证 panic 被捕获、500 返 + 写日志（这里不直接抓日志，
-// 只验证响应符合预期 + next handler 不会跑到 panic 之后的代码）。
+// 只验证响应符合预期）。
 func TestRecovererMiddleware_Recovers(t *testing.T) {
 	t.Parallel()
 	mw := recovererMiddleware()
 
-	afterPanic := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 抛 panic — 函数不会返回，recovererMiddleware 应该接住。
 		panic("boom!")
-		// unreachable
-		afterPanic = true
 	})
 
 	h := mw(next)
@@ -55,9 +53,6 @@ func TestRecovererMiddleware_Recovers(t *testing.T) {
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", rr.Code)
-	}
-	if afterPanic {
-		t.Fatal("expected code after panic NOT to run, but it did")
 	}
 	// 响应 body 是 JSON 错误格式，不应暴露 panic 内容
 	body := rr.Body.String()

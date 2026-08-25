@@ -31,7 +31,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
           cache-dependency-path: server/go.sum
 
@@ -46,7 +46,7 @@ jobs:
       - name: go test (with coverage)
         working-directory: server
         run: |
-          go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
+          GOTOOLCHAIN=local go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
           go tool cover -func=coverage.out | tail -1
 
       - name: go build
@@ -121,7 +121,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
-  # Shell 脚本 lint（install.sh / install-systemd.sh）
+  # Shell 脚本 lint（install.sh / install-systemd.sh / install-online.sh）
   # ---------------------------------------------------------------------------
   shellcheck:
     name: shellcheck
@@ -135,4 +135,10 @@ jobs:
         with:
           scandir: ./scripts
           additional_files: install.sh install-systemd.sh
-          ignore: SC1091,SC2086,SC2154
+        env:
+          # 忽略：
+          #   SC1091 — source 路径动态（sourced scripts 在 shellcheck 看不到内容）
+          #   SC2086 — 双引号 vs word-splitting（项目有大量有意图的无引号用法）
+          #   SC2154 — 引用未赋值变量（同上，sourced 进来的）
+          # 用 -e 通过 SHELLCHECK_OPTS 传（`ignore` 字段已弃用，改用 SHELLCHECK_OPTS）
+          SHELLCHECK_OPTS: -e SC1091 -e SC2086 -e SC2154

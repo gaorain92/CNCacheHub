@@ -9,7 +9,7 @@
 #     cncachehub:dev
 
 # --- build stage ---
-FROM golang:1.22-alpine AS build
+FROM golang:1.23-alpine AS build
 
 # 国内 / 海外构建都可能用到，留 ca-certificates 方便 go get 走 https。
 RUN apk add --no-cache ca-certificates git
@@ -27,7 +27,7 @@ COPY . .
 # -trimpath 移除本地路径，-ldflags="-s -w" 去符号表。
 ARG VERSION=dev
 ARG COMMIT=local
-RUN CGO_ENABLED=0 GOOS=linux \
+RUN CGO_ENABLED=0 GOOS=linux GOTOOLCHAIN=local \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/cncachehub ./cmd/cncachehub
 
