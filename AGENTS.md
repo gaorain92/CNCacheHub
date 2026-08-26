@@ -385,7 +385,7 @@ sub-agent 返回时必须：
 
 ### Phase 3 — 完善
 
-- [x] 鉴权 / RBAC（admin / viewer 两级）
+- [x] 鉴权 / RBAC（admin / 普通用户两级 — `IsAdmin` bool）
 - [x] 通知（webhook 部分实现，邮件未做）
 - [x] 自定义 panic recoverer（runtime.Stack + debug.Stack）
 - [x] 健康检查 playbook（Docker pull / Steam DNS / 反代 / 5xx 错误率）

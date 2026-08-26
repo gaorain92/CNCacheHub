@@ -35,7 +35,7 @@ CNCacheHub 是一个**自托管的反向代理缓存**。它的安全边界是�
 | 鉴权 | ✅ | Cookie + CSRF，所有 admin API 走会话校验 |
 | 速率限制 | ✅ | Go server 中间件，token-bucket 防爆破 + DoS |
 | 5xx 信息泄露 | ✅ | 错误信息脱敏，不暴露内部路径 / SQL |
-| RBAC | ✅ | viewer / operator / admin 三级 |
+| RBAC | ✅ | admin / 普通用户 两级（IsAdmin bool） |
 | Docker 加固 | ✅ | cap_drop ALL + no-new-privileges + mem/pid 限制 + read_only |
 | Caddy 加固 | ✅ | body 大小限制 + `/metrics` IP 白名单 + 严格响应头 |
 | 路径校验 | ✅ | `validate_path` 拒绝 `/` `/tmp` `..` 等危险路径 |

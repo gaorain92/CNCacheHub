@@ -136,9 +136,18 @@ docker compose up -d
 
 ## 项目状态
 
-当前处于 **Phase 0：项目骨架**。MVP（Docker Hub pull-through cache + 控制台）见路线图。
+当前版本 **v0.1.1**（2026-08-26）。已发布的所有功能：
+- Docker Hub / GHCR / Quay / k8s.io / 自定义 registry pull-through 缓存
+- SteamCMD AppID 预热 + 内置 mini DNS server
+- 资源加速中心（GitHub / HuggingFace / Playwright / Terraform / 自定义）
+- HF 镜像端点（`HF_ENDPOINT=http://host/hf` 兼容）
+- 11 个业务页面（Dashboard / Docker / SteamCMD / Cache / Logs / Settings / Clients / Preheat / Resources / HuggingFace / Diagnostics）
+- 鉴权 / RBAC（admin / 普通用户两级）+ 访问控制（Token + IP 白名单）
+- 通知（webhook 部分实现）
+- 诊断剧本 + bundle 导出
+- 14 个包 66-100% 测试覆盖 + CI 4-job（go / web / docker / shellcheck）
 
-详见 [AGENTS.md 第 10 节](./AGENTS.md#10-当前状态--路线图)。
+路线图与未完成项见 [AGENTS.md 第 10 节](./AGENTS.md#10-当前状态--路线图)。
 
 ---
 
