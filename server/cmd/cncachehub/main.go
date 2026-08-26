@@ -1495,10 +1495,24 @@ func readDockerDaemonConfig() ([]string, bool) {
 	if err := json.Unmarshal(data, &dc); err != nil {
 		return nil, false
 	}
+	// insecure = 任何一个 mirror / insecure-registry 是 http://（明文）。
+	// 跟具体 IP 无关 — 任何 HTTP endpoint 都不该走生产 daemon。
+	//
+	// 旧逻辑：检查 r 是否含特定 IP（含本测试机 IP）— 是遗留的"检测是否连
+	// 我们的测试机"启发式，对生产用户无意义且会泄露测试机 IP。已删。
 	insecure := false
 	for _, r := range dc.InsecureRegistries {
-		if strings.Contains(r, "117.55.237.250") || strings.Contains(r, "127.0.0.1") || strings.Contains(r, "localhost") {
+		if strings.HasPrefix(strings.ToLower(r), "http://") {
 			insecure = true
+			break
+		}
+	}
+	if !insecure {
+		for _, r := range dc.RegistryMirrors {
+			if strings.HasPrefix(strings.ToLower(r), "http://") {
+				insecure = true
+				break
+			}
 		}
 	}
 	return dc.RegistryMirrors, insecure

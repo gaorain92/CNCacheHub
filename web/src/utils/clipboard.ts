@@ -1,8 +1,8 @@
 // utils/clipboard.ts — 健壮的剪贴板写入，兼容 HTTP / 非 secure context。
 //
 // 问题：`navigator.clipboard.writeText()` 只在 secure context（HTTPS /
-// localhost / 127.0.0.1）下可用。CNCacheHub 的 web UI 在测试机上是
-// `http://117.55.237.250/...`（HTTP 公网 IP），secure context 不可用
+// localhost / 127.0.0.1）下可用。CNCacheHub 的 web UI 默认部署在 HTTP
+// 公网 IP（如 `http://your-host.example.com/`），secure context 不可用
 // → `navigator.clipboard` 是 undefined 或 writeText 抛 "Document is not
 // focused" / "Write permission denied"，导致所有 "复制" 按钮 catch 报
 // "复制失败"。

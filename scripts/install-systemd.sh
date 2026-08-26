@@ -293,7 +293,7 @@ write_systemd_unit() {
 # 由 install.sh 生成 — 改完用 systemctl edit ${CNCH_SERVICE_NAME} 加 override
 [Unit]
 Description=CNCacheHub Server (Go HTTP API + 反代)
-Documentation=https://github.com/cncachehub/cncachehub
+Documentation=https://github.com/gaorain92/CNCacheHub
 After=network-online.target
 Wants=network-online.target
 

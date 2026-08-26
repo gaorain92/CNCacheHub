@@ -160,4 +160,4 @@ CREATE TABLE node_health (
 
 - 后端：每个 package 都有 `*_test.go`；go test ./...
 - 前端：vue-tsc + vite build（tsc 严格模式）；
-- 集成：E2E 用 curl 跑在测试机 `117.55.237.250` 上，每个 P2 commit 后跑一遍。
+- 集成：E2E 用 curl 跑在用户的开发 VPS 上（具体 IP 见用户本地凭据），每个 P2 commit 后跑一遍。

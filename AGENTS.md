@@ -11,7 +11,10 @@
 
 - **首版 MVP**：Docker Hub pull-through cache + 缓存可视化 + 健康检查 + 配置生成。
 - **次版迭代**：多 Registry、SteamCMD 缓存、资源加速中心、诊断中心、定时清理、小容量 VPS 优化。
-- **v0.1.0（当前）**：P0 + P1 + P2 4/5 全部完成，剩多节点 / 高可用（明确不做）。
+- **v0.1.0（2026-08-04）**：P0 + P1 + P2 4/5 全部完成，剩多节点 / 高可用（明确不做）。
+- **v0.1.1（2026-08-26，当前）**：HuggingFace 镜像 + nezha 风格一键安装 + security audit
+  （clientip / body limit / 代理头过滤 / LIKE escape / path traversal / 安全头）+ CI 修复
+  （go vet / shellcheck severity / docker build 路径 / DNS race / linux Chtimes）+ web copy 按钮 HTTP fallback。
 
 ---
 
@@ -205,7 +208,7 @@ cat /tmp/cnch-server.tar.gz | sshpass -f ~/.ssh/.cnch_pw ssh root@<ip> \
 # 3. 在测试机重 build + 重启
 ssh root@<ip> 'cd /opt/cncachehub/server && \
   CGO_ENABLED=0 go build -trimpath \
-    -ldflags="-s -w -X main.version=v0.1.0-dev -X main.commit=local" \
+    -ldflags="-s -w -X main.version=v0.1.1 -X main.commit=local" \
     -o /usr/local/bin/cncachehub ./cmd/cncachehub && \
   cp /usr/local/bin/cncachehub /usr/local/bin/cncachehub.bak.$(date +%Y%m%d-%H%M%S) && \
   systemctl restart cncachehub-server'
@@ -349,7 +352,7 @@ sub-agent 返回时必须：
 
 ## 10. 当前状态 / 路线图
 
-> 最近一次更新：2026-08-04（v0.1.0-dev 测试机部署完成）
+> 最近一次更新：2026-08-26（v0.1.1 发布 — HuggingFace 镜像 + security audit + CI 修复 + copy 按钮）
 
 ### Phase 0 — 项目骨架 ✅
 
@@ -380,41 +383,42 @@ sub-agent 返回时必须：
 - [x] 小容量 VPS 优化开关（CNCH_SMALL_VPS_OPT）
 - [ ] 多节点 / 高可用（明确**不做**）
 
-### Phase 3 — 完善（进行中）
+### Phase 3 — 完善
 
 - [x] 鉴权 / RBAC（admin / viewer 两级）
 - [x] 通知（webhook 部分实现，邮件未做）
 - [x] 自定义 panic recoverer（runtime.Stack + debug.Stack）
 - [x] 健康检查 playbook（Docker pull / Steam DNS / 反代 / 5xx 错误率）
-- [x] 测试覆盖 backfill（13 个包 0% → 64-100%）
+- [x] 测试覆盖 backfill（**14 个包** 0% → 66-100%，含 clientip 新包）
+- [x] 真实 GitHub Release（v0.1.0 / v0.1.1）
 - [ ] Helm Chart 部署
-- [ ] 真实 GitHub Release（需 user 提供 token）
 
-### 当前测试覆盖（`make test`）
+### 当前测试覆盖（`make test`，截至 v0.1.1）
 
 | 包 | 覆盖率 |
 |---|---|
 | ratelimit | 100.0% |
-| access | 94.7% |
+| access | 95.3% |
 | metrics | 93.9% |
 | dns | 92.8% |
-| config | 85.2% |
-| preheat | 84.6% |
+| clientip | 88.9% |
+| config | 85.9% |
+| preheat | 85.5% |
 | crypto | 77.8% |
-| proxy | 77.6% |
 | cache | 77.3% |
 | diagnostics | 73.6% |
-| storage | 70.2% |
+| proxy | 71.3% |
+| storage | 70.4% |
 | log | 69.2% |
-| api | 64.5% |
+| api | 66.5% |
 
 ### 测试机部署状态
 
-- **测试机**：117.55.237.250（1GB RAM / Debian 12 / EDT 时区）
+- **测试机**：用户的开发 VPS（IP 见用户本地 ~/.ssh/config `gaorain-64_27_6_157` 别名；1GB RAM / Debian 12）
 - **runtime**：systemd（cncachehub-server.service）
-- **当前 binary**：`/usr/local/bin/cncachehub` v0.1.0-dev，commit=local
-- **启动时间**：2026-08-04 04:47 EDT（每次手动热更新会重启）
-- **登录**：`root` / `newpass99`
+- **当前 binary**：`/usr/local/bin/cncachehub` v0.1.1（tag 详见 git tag -l）
+- **启动时间**：每次手动热更新会重启
+- **登录凭据**：见用户本地密码文件（`~/.ssh/.cnch_pw` 等），**不要写进本项目任何文件**
 - **数据目录**：`/var/lib/cncachehub/data/cncachehub.db`
 - **web dist**：`/opt/cncachehub/web/dist/`（nginx serve）
 - **nginx**：80 → 127.0.0.1:8082，含安全头 + /metrics 限制

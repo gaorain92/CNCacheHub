@@ -50,7 +50,7 @@ type Report struct {
 // RunnerOptions 携带检查需要的依赖。
 type RunnerOptions struct {
 	CNCHBaseURL    string // 形如 "http://127.0.0.1:8082"
-	PublicBaseURL  string // 形如 "http://117.55.237.250"，给 nginx 健康检查用
+	PublicBaseURL  string // 形如 "http://your-host:8082"，给 nginx 健康检查用
 	UpstreamURL    string // 形如 "https://registry-1.docker.io"
 	DNSServerStats func() DNSStats
 	AccessLogCount func() (recent24h int, errCount24h int, total5xx int, err error) // 从 access_log 聚合

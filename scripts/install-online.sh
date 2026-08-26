@@ -6,10 +6,10 @@
 #
 # 用法：
 #   # 默认（GitHub）
-#   curl -L https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/install-online.sh | sudo bash
+#   curl -L https://raw.githubusercontent.com/gaorain92/CNCacheHub/main/scripts/install-online.sh | sudo bash
 #
 #   # 国内用 gitee 镜像
-#   curl -L https://gitee.com/cncachehub/cncachehub/raw/main/scripts/install-online.sh | sudo CN=true bash
+#   curl -L https://gitee.com/gaorain92/CNCacheHub/raw/main/scripts/install-online.sh | sudo CN=true bash
 #
 #   # 非交互（环境变量预设参数）
 #   curl -L ... | sudo CNCH_ADMIN_PASSWORD=mysecret bash
@@ -32,7 +32,7 @@
 #   CNCH_DATA_DIR           数据目录（默认 /var/lib/cncachehub/data）
 #   CNCH_RUNTIME            systemd | docker（默认 auto）
 #   CN=true                 强制走 gitee 镜像
-#   CNCH_REPO               仓库 owner/name（默认 cncachehub/cncachehub）
+#   CNCH_REPO               仓库 owner/name（默认 gaorain92/CNCacheHub）
 #   CNCH_BRANCH             git 分支（默认 main）
 #   CNCH_VERSION            版本（默认 latest）
 #   CNCH_BASE_URL           实际访问 base URL（默认自动探测；显式用于 init API）
@@ -47,13 +47,15 @@ CNCH_ADMIN_PASSWORD="${CNCH_ADMIN_PASSWORD:-}"
 CNCH_HTTP_PORT="${CNCH_HTTP_PORT:-80}"
 CNCH_DATA_DIR="${CNCH_DATA_DIR:-/var/lib/cncachehub/data}"
 CNCH_RUNTIME="${CNCH_RUNTIME:-}"
-CNCH_REPO="${CNCH_REPO:-cncachehub/cncachehub}"
+CNCH_REPO="${CNCH_REPO:-gaorain92/CNCacheHub}"
 CNCH_BRANCH="${CNCH_BRANCH:-main}"
 CNCH_VERSION="${CNCH_VERSION:-latest}"
 CNCH_BASE_URL="${CNCH_BASE_URL:-}"
 CNCH_FORCE_CN="${CNCH_FORCE_CN:-${CN:-}}"
 
 # GitHub raw / 发行版
+# 默认仓库为 gaorain92/CNCacheHub（开发者的 fork）；用户自建可
+# 覆盖 CNCH_REPO 环境变量。
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/${CNCH_REPO}/${CNCH_BRANCH}"
 GITEE_RAW_BASE="https://gitee.com/${CNCH_REPO}/raw/${CNCH_BRANCH}"
 

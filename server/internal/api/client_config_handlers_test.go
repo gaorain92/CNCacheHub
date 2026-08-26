@@ -40,7 +40,7 @@ func clientConfigTestHandler(t *testing.T) (http.Handler, *fakeAuthDB) {
 func TestClientConfig_ContainerdHosts_GHCR(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config?format=containerd-hosts&registry=ghcr", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -60,7 +60,7 @@ func TestClientConfig_ContainerdHosts_GHCR(t *testing.T) {
 	if !strings.Contains(resp.Content, `server = "https://ghcr.io"`) {
 		t.Errorf("content missing server = https://ghcr.io; got: %s", resp.Content)
 	}
-	if !strings.Contains(resp.Content, `[host."http://117.55.237.250:8082"]`) {
+	if !strings.Contains(resp.Content, `[host."http://example.com:8082"]`) {
 		t.Errorf("content missing [host.]; got: %s", resp.Content)
 	}
 	if !strings.Contains(resp.Content, "capabilities") {
@@ -77,7 +77,7 @@ func TestClientConfig_ContainerdHosts_GHCR(t *testing.T) {
 func TestClientConfig_K3sRegistries_GHCR(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config?format=k3s-registries&registry=ghcr", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -92,7 +92,7 @@ func TestClientConfig_K3sRegistries_GHCR(t *testing.T) {
 	if !strings.Contains(resp.Content, "ghcr.io:") {
 		t.Errorf("content missing ghcr.io: block")
 	}
-	if !strings.Contains(resp.Content, "http://117.55.237.250:8082") {
+	if !strings.Contains(resp.Content, "http://example.com:8082") {
 		t.Errorf("content missing endpoint URL")
 	}
 	if resp.TargetPath != "/etc/rancher/k3s/registries.yaml" {
@@ -104,7 +104,7 @@ func TestClientConfig_DefaultHost_ForDockerhub(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	// dockerhub 用 /v2 (无 ghcr/ 前缀) — 客户端访问时镜像路径应该是根
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config?format=containerd-hosts&registry=dockerhub", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -191,7 +191,7 @@ func extractBundle(t *testing.T, data []byte) map[string][]byte {
 func TestClientConfigBundle_HasAll10Files(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -235,7 +235,7 @@ func TestClientConfigBundle_HasAll10Files(t *testing.T) {
 func TestClientConfigBundle_DaemonJSON_Valid(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -251,7 +251,7 @@ func TestClientConfigBundle_DaemonJSON_Valid(t *testing.T) {
 	if !strings.Contains(string(dj), `"registry-mirrors"`) {
 		t.Errorf("daemon.json missing registry-mirrors: %s", dj)
 	}
-	if !strings.Contains(string(dj), `http://117.55.237.250:8082`) {
+	if !strings.Contains(string(dj), `http://example.com:8082`) {
 		t.Errorf("daemon.json missing base URL: %s", dj)
 	}
 	// 应该是合法 JSON（去掉注释前缀行）
@@ -281,7 +281,7 @@ func TestClientConfigBundle_DaemonJSON_Valid(t *testing.T) {
 func TestClientConfigBundle_K3sYAML_ContainsAllEnabled(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -300,7 +300,7 @@ func TestClientConfigBundle_K3sYAML_ContainsAllEnabled(t *testing.T) {
 func TestClientConfigBundle_PlaywrightEnv_ContainsHost(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	files := extractBundle(t, rr.Body.Bytes())
@@ -308,7 +308,7 @@ func TestClientConfigBundle_PlaywrightEnv_ContainsHost(t *testing.T) {
 	if !strings.Contains(pe, "PLAYWRIGHT_DOWNLOAD_HOST=") {
 		t.Errorf("playwright.env missing PLAYWRIGHT_DOWNLOAD_HOST")
 	}
-	if !strings.Contains(pe, "http://117.55.237.250:8082/r/playwright") {
+	if !strings.Contains(pe, "http://example.com:8082/r/playwright") {
 		t.Errorf("playwright.env missing base URL")
 	}
 }
@@ -320,7 +320,7 @@ func TestClientConfigBundle_VerifySh_BashSyntax(t *testing.T) {
 	}
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	files := extractBundle(t, rr.Body.Bytes())
@@ -338,12 +338,12 @@ func TestClientConfigBundle_VerifySh_BashSyntax(t *testing.T) {
 func TestClientConfigBundle_Readme_ContainsBaseURL(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	files := extractBundle(t, rr.Body.Bytes())
 	rm := string(files["README.md"])
-	if !strings.Contains(rm, "http://117.55.237.250:8082") {
+	if !strings.Contains(rm, "http://example.com:8082") {
 		t.Errorf("README missing base URL")
 	}
 	if !strings.Contains(rm, "## 快速验证") {
@@ -357,7 +357,7 @@ func TestClientConfigBundle_Readme_ContainsBaseURL(t *testing.T) {
 func TestClientConfigBundle_SteamCMDCompose_ContainsDNS(t *testing.T) {
 	h, _ := clientConfigTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/client-config/bundle", nil)
-	req.Host = "117.55.237.250:8082"
+	req.Host = "example.com:8082"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	files := extractBundle(t, rr.Body.Bytes())
@@ -381,7 +381,7 @@ func TestClientConfigBundle_SteamCMDCompose_ContainsDNS(t *testing.T) {
 func TestClientConfigBundle_UsesPublicBaseURL(t *testing.T) {
 	fdb := newFakeAuthDB(t)
 	_, _ = fdb.CreateUser(context.Background(), "admin", "admin1234", true)
-	publicURL := "http://117.55.237.250"
+	publicURL := "http://public.example.test:8082"
 	h := NewRouter(Options{
 		AuthDB: fdb.DB,
 		ListRegistries: func(ctx context.Context) ([]storage.Registry, error) {
@@ -397,7 +397,7 @@ func TestClientConfigBundle_UsesPublicBaseURL(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/client-config/bundle", nil)
 	req.RemoteAddr = "1.2.3.4:1234"
 	// 不传 Host header，模拟从公网访问：后端 r.Host 是 "example.com" 之类
-	req.Host = "example.com"
+	req.Host = "leaked-host.example"
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -433,7 +433,7 @@ func TestDaemonJSON_UsesPublicBaseURL(t *testing.T) {
 	fdb := newFakeAuthDB(t)
 	u, _ := fdb.CreateUser(context.Background(), "admin", "admin1234", true)
 	sess, _ := fdb.CreateSession(context.Background(), u.ID, "127.0.0.1", "test", SessionTTL)
-	publicURL := "http://117.55.237.250"
+	publicURL := "http://public.example.test:8082"
 	h := NewRouter(Options{
 		AuthDB: fdb.DB,
 		GetUpstreams: func(ctx context.Context) ([]Upstream, error) {
@@ -445,7 +445,7 @@ func TestDaemonJSON_UsesPublicBaseURL(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/api/docker/daemon.json", nil)
-	req.Host = "example.com"
+	req.Host = "leaked-host.example"
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: sess.Token})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

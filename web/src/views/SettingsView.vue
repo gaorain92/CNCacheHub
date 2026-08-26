@@ -325,7 +325,7 @@ function generateRandomToken(): void {
       </p>
       <el-input
         v-model="publicBaseUrl"
-        placeholder="例如 http://117.55.237.250（留空 = 用当前访问地址）"
+        placeholder="例如 http://your-host.example.com:8082（留空 = 用当前访问地址）"
         :disabled="!auth.isAdmin"
       />
       <p class="text-xs text-slate-500">

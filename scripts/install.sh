@@ -112,7 +112,7 @@ CNCacheHub 一键部署脚本 v${CNCH_VERSION}
                      release = 从 GitHub Releases 拉预编译 tarball（保证最新 release）
   --version=VER      latest（默认）| vX.Y.Z | <git-ref>
   --git-url=URL      自定义 git remote URL（默认用 \$PROJECT_ROOT 的 origin）
-  --release-url=URL  自定义 release 主机（默认 https://github.com/cncachehub/cncachehub/releases）
+  --release-url=URL  自定义 release 主机（默认 https://github.com/gaorain92/CNCacheHub/releases）
 
 远程部署:
   --host=USER@HOST   目标主机（仅 remote 模式）
@@ -826,13 +826,13 @@ resolve_source_git() {
 }
 
 # release 模式：从 GitHub Releases（或其他 host）下载预编译 tarball
-# 默认主机 https://github.com/cncachehub/cncachehub/releases
+# 默认主机 https://github.com/gaorain92/CNCacheHub/releases
 resolve_source_release() {
   if [[ $DRY_RUN -eq 1 ]]; then
     log "[dry-run] 跳过 release 下载"
     return 0
   fi
-  local host="${RELEASE_URL:-https://github.com/cncachehub/cncachehub/releases}"
+  local host="${RELEASE_URL:-https://github.com/gaorain92/CNCacheHub/releases}"
   local version="$VERSION"
   # 1. 解析 version（latest → 查 API；具体 tag 直接用）
   if [[ "$version" == "latest" ]]; then
@@ -864,7 +864,7 @@ resolve_source_release() {
   local asset="cncachehub-${version}-linux-amd64.tar.gz"
   local download_url
   if [[ "$host" == *"github.com"* ]]; then
-    download_url="https://github.com/cncachehub/cncachehub/releases/download/${version}/${asset}"
+    download_url="https://github.com/gaorain92/CNCacheHub/releases/download/${version}/${asset}"
   else
     download_url="$host/download/${version}/${asset}"
   fi

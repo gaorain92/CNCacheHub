@@ -62,7 +62,7 @@ func TestContains(t *testing.T) {
 
 func TestCheckDaemonConfig_Empty(t *testing.T) {
 	r := checkDaemonConfig(RunnerOptions{
-		PublicBaseURL: "http://117.55.237.250",
+		PublicBaseURL: "http://example.com",
 		DaemonConfig:  func() (mirrors []string, insecure bool) { return nil, false },
 	})
 	if r.Status != StatusWarning {
@@ -72,9 +72,9 @@ func TestCheckDaemonConfig_Empty(t *testing.T) {
 
 func TestCheckDaemonConfig_OK(t *testing.T) {
 	r := checkDaemonConfig(RunnerOptions{
-		PublicBaseURL: "http://117.55.237.250",
+		PublicBaseURL: "http://example.com",
 		DaemonConfig: func() (mirrors []string, insecure bool) {
-			return []string{"http://117.55.237.250"}, false
+			return []string{"http://example.com"}, false
 		},
 	})
 	if r.Status != StatusOK {

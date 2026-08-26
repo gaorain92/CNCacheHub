@@ -306,7 +306,7 @@ func TestChangePassword(t *testing.T) {
 	t.Logf("/me with cookie: status=%d body=%s", rr0.Code, rr0.Body.String())
 	// 改密
 	rr2 := postJSON(t, h, "/api/auth/change-password",
-		ChangePasswordRequest{OldPassword: "admin1234", NewPassword: "newpass99"},
+		ChangePasswordRequest{OldPassword: "admin1234", NewPassword: "newtestpw"},
 		cookie)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("change-password status = %d, want 200; body=%s", rr2.Code, rr2.Body.String())
@@ -317,7 +317,7 @@ func TestChangePassword(t *testing.T) {
 		t.Errorf("old password login = %d, want 401", rr3.Code)
 	}
 	// 用新密码登录应成功
-	rr4 := postJSON(t, h, "/api/auth/login", LoginRequest{Username: "admin", Password: "newpass99"})
+	rr4 := postJSON(t, h, "/api/auth/login", LoginRequest{Username: "admin", Password: "newtestpw"})
 	if rr4.Code != http.StatusOK {
 		t.Errorf("new password login = %d, want 200", rr4.Code)
 	}
@@ -334,7 +334,7 @@ func TestChangePassword_WrongOld(t *testing.T) {
 		}
 	}
 	rr2 := postJSON(t, h, "/api/auth/change-password",
-		ChangePasswordRequest{OldPassword: "wrong", NewPassword: "newpass99"},
+		ChangePasswordRequest{OldPassword: "wrong", NewPassword: "newtestpw"},
 		cookie)
 	if rr2.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rr2.Code)

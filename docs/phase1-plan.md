@@ -1,6 +1,6 @@
 # Phase 1 — 第一刀：Docker Hub Pull-Through MVP
 
-> 目标：在已部署的 117.55.237.250 跑通 Docker Hub 镜像代理，让 `docker pull nginx:latest` 能过 CNCacheHub、落盘、二次命中。
+> 目标：在已部署的开发 VPS 上跑通 Docker Hub 镜像代理，让 `docker pull nginx:latest` 能过 CNCacheHub、落盘、二次命中。
 >
 > 后续模块（多 Registry / SteamCMD / 资源加速 / 鉴权）都共用本套架构，先把这条主路径打通。
 
@@ -58,7 +58,7 @@
 |---|---|---|
 | `deploy/nginx/cncachehub.conf` | 改 | `/v2/` 优先于 SPA fallback 走 `proxy_pass` |
 | 测试机 `/etc/nginx/sites-available/cncachehub` | 改 | 同上 |
-| 测试机 `~/.docker/daemon.json` | 改 | 加 `insecure-registries: ["117.55.237.250"]` + `registry-mirrors: ["http://117.55.237.250"]` |
+| 测试机 `~/.docker/daemon.json` | 改 | 加 `insecure-registries: ["<测试机 IP>"]` + `registry-mirrors: ["http://<测试机 IP>"]` |
 
 ## 3. 关键设计决策
 
@@ -193,7 +193,7 @@ VALUES ('dockerhub', 'https://registry-1.docker.io', '/v2', 1, strftime('%s','no
 
 ### 端到端
 - [ ] 测试机 `~/.docker/daemon.json` 配 `registry-mirrors` + `insecure-registries`
-- [ ] `docker pull 117.55.237.250/library/nginx:latest`（或 `nginx:latest` 走 mirror）成功
+- [ ] `docker pull <测试机 IP>/library/nginx:latest`（或 `nginx:latest` 走 mirror）成功
 - [ ] 二次 `docker pull` 命中率 100%（从 cache 出）
 - [ ] Web Dashboard 数字和实际匹配
 
@@ -205,7 +205,7 @@ VALUES ('dockerhub', 'https://registry-1.docker.io', '/v2', 1, strftime('%s','no
 | 大 layer 内存爆 | `io.Copy`，缓存写入 `tmp` + `rename` |
 | access_log 写阻塞主流程 | goroutine + 100ms 批量 flush |
 | `/v2/` 被 nginx SPA fallback 抢 | nginx `/v2/` 走 `proxy_pass`，在 `try_files` 之前 |
-| Docker daemon 27+ 拒非 HTTPS mirror | daemon.json 加 `insecure-registries: ["117.55.237.250"]` |
+| Docker daemon 27+ 拒非 HTTPS mirror | daemon.json 加 `insecure-registries: ["<测试机 IP>"]` |
 | 跨太平洋拉 Docker Hub 慢 | 海外服务器直连 ~5MB/s，可接受 |
 | 1GB RAM 跑 daemon proxy 内存爆 | `SmallVPSOpt=true` 时 GC 更激进 + 大对象早释放 |
 

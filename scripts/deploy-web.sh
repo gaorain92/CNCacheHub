@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-HOST="${DEPLOY_HOST:-root@117.55.237.250}"
+HOST="${DEPLOY_HOST:-root@<your-test-host>}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/opt/cncachehub/web/dist}"
 PASSWORD_FILE="${DEPLOY_PASSWORD_FILE:-$HOME/.ssh/.cnch_pw}"
 LOCAL_DIST="$(cd "$(dirname "$0")/../web/dist" && pwd)"

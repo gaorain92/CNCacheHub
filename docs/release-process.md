@@ -9,7 +9,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          开发者本地                                  │
-│  git tag v0.1.0 && git push --tags                                  │
+│  git tag v0.1.1 && git push --tags                                  │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
@@ -17,9 +17,9 @@
 │                      GitHub Releases API                              │
 │  - release tag 创建                                                   │
 │  - release asset 上传:                                               │
-│      cncachehub-v0.1.0-linux-amd64.tar.gz                           │
-│      cncachehub-v0.1.0-darwin-amd64.tar.gz                          │
-│      cncachehub-v0.1.0-source.tar.gz (含源码)                       │
+│      cncachehub-v0.1.1-linux-amd64.tar.gz                           │
+│      cncachehub-server-v0.1.1-darwin-amd64                           │
+│      cncachehub-web-v0.1.1.tar.gz                                   │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
                                  ▼
@@ -27,8 +27,8 @@
 │                          用户机器                                     │
 │  ./install.sh --source=release --version=latest                     │
 │    ↓                                                                  │
-│  1. 查 GitHub API 拿 latest tag (v0.1.0)                              │
-│  2. 下载 cncachehub-v0.1.0-linux-amd64.tar.gz                       │
+│  1. 查 GitHub API 拿 latest tag (v0.1.1)                              │
+│  2. 下载 cncachehub-v0.1.1-linux-amd64.tar.gz                       │
 │  3. 解压 → systemd 部署 / docker 部署                                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -57,7 +57,7 @@ cd server && go test ./... && cd ..
 cd web && npm run type-check && npm run lint && cd ..
 
 # 3. 打 tag（用 v 前缀）
-git tag -a v0.1.0 -m "v0.1.0 — first public release"
+git tag -a v0.1.1 -m "v0.1.1 — HuggingFace 镜像 + security audit + CI 修复"
 git push origin main --tags
 ```
 
@@ -69,59 +69,57 @@ git push origin main --tags
 # 安装 gh (macOS: brew install gh / Debian: apt install gh)
 
 # 1. 编译 Linux amd64 制品
-make release-linux
-# 或手写：
-#   cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=v0.1.0 -X main.commit=v0.1.0" -o ../dist/cncachehub-server-v0.1.0-linux-amd64 ./cmd/cncachehub
+make release VERSION=v0.1.1
+# （或手写：
+#   cd server && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=v0.1.1 -X main.commit=v0.1.1" -o ../dist/cncachehub-server-v0.1.1-linux-amd64 ./cmd/cncachehub
 #   cd web && npm ci && npm run build
-#   tar -czf ../dist/cncachehub-web-v0.1.0.tar.gz dist/
+#   tar -czf ../dist/cncachehub-web-v0.1.1.tar.gz dist/）
 
 # 2. 合并成单一 tarball（install.sh 默认只下载这一个）
-tar -czf cncachehub-v0.1.0-linux-amd64.tar.gz \
-  -C dist cncachehub-server-v0.1.0-linux-amd64 \
-  -C dist cncachehub-web-v0.1.0.tar.gz
+tar -czf cncachehub-v0.1.1-linux-amd64.tar.gz \
+  -C dist cncachehub-server-v0.1.1-linux-amd64 \
+  -C dist cncachehub-web-v0.1.1.tar.gz \
+  -C dist manifest.json
 
 # 3. 上传
-gh release create v0.1.0 \
-  --title "v0.1.0" \
+gh release create v0.1.1 \
+  --title "v0.1.1" \
   --notes "## Changes
-- First public release
-- Docker Compose + systemd deployment
-- Registry pull-through cache
-- SteamCMD AppID management
-- Resource acceleration (GitHub/HuggingFace/etc.)
-- Web dashboard with role-based access" \
-  cncachehub-v0.1.0-linux-amd64.tar.gz \
-  cncachehub-v0.1.0-darwin-amd64.tar.gz
+- HuggingFace 镜像端点（/hf/* + /api/huggingface/*）
+- nezha 风格 install-online.sh 一键安装
+- security audit（clientip / body limit / 代理头过滤 / LIKE escape / path traversal / 安全头）
+- CI 修复（go vet / shellcheck / docker build / 跨平台 race / linux Chtimes）
+- web 复制按钮 HTTP fallback" \
+  cncachehub-v0.1.1-linux-amd64.tar.gz
 
 # 4. 验证
-gh release view v0.1.0
+gh release view v0.1.1
 ```
 
 ### 2.3 tarball 内部结构（install.sh 期望的格式）
 
 ```bash
 # 任意路径下解压后应该有：
-tar -tzf cncachehub-v0.1.0-linux-amd64.tar.gz
-#   ./cncachehub-server-linux-amd64        # Go 静态二进制
-#   ./web-dist.tar.gz                       # web dist 打包
-#   ./manifest.json                         # 版本元数据
+tar -tzf cncachehub-v0.1.1-linux-amd64.tar.gz
+#   ./cncachehub-server-v0.1.1-linux-amd64   # Go 静态二进制
+#   ./cncachehub-web-v0.1.1.tar.gz          # web dist 打包
+#   ./manifest.json                          # 版本元数据
 ```
 
-`manifest.json` 模板：
+`manifest.json` 模板（实际由 Makefile 生成）：
 
 ```json
 {
   "name": "cncachehub",
-  "version": "v0.1.0",
-  "commit": "abc1234",
-  "buildDate": "2026-07-31T10:00:00Z",
+  "version": "v0.1.1",
+  "commit": "7cbc95e",
+  "buildDate": "2026-08-26T05:36:19Z",
   "components": {
     "server": {
-      "binary": "cncachehub-server-linux-amd64",
-      "goVersion": "1.22.10"
+      "binary": "cncachehub-server-v0.1.1-linux-amd64"
     },
     "web": {
-      "archive": "web-dist.tar.gz"
+      "archive": "cncachehub-web-v0.1.1.tar.gz"
     }
   }
 }
@@ -198,7 +196,7 @@ jobs:
 ### 3.1 一行装最新
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/gaorain92/CNCacheHub/main/scripts/install.sh | \
   bash -s -- --source=release --runtime=systemd --admin-password=mySecret123
 ```
 
@@ -228,7 +226,7 @@ curl -fsSL https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/
 或者指定 remote URL：
 
 ```bash
-./install.sh --source=git --git-url=https://github.com/cncachehub/cncachehub.git
+./install.sh --source=git --git-url=https://github.com/gaorain92/CNCacheHub.git
 ```
 
 ---
@@ -276,7 +274,7 @@ curl -fsSL https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/
 - 退出时清理 staging
 - 适合：纯用户机器装 CNCacheHub，不装 Go / npm / docker
 
-`--release-url` 自定义主机（默认 `https://github.com/cncachehub/cncachehub/releases`）：
+`--release-url` 自定义主机（默认 `https://github.com/gaorain92/CNCacheHub/releases`）：
 
 ```bash
 ./install.sh --source=release --release-url=https://gitea.example.com/cncachehub/releases
@@ -303,11 +301,11 @@ curl -fsSL https://raw.githubusercontent.com/cncachehub/cncachehub/main/scripts/
 ```bash
 # 1. 服务在线
 curl -sf http://localhost:8082/api/healthz | head -c 100
-# 期望: {"db":"ok","status":"ok","uptime":"3s","version":"v0.1.0",...}
+# 期望: {"db":"ok","status":"ok","uptime":"3s","version":"v0.1.1",...}
 
 # 2. 版本正确
 curl -s http://localhost:8082/api/version
-# 期望: {"name":"cncachehub","version":"v0.1.0","commit":"v0.1.0",...}
+# 期望: {"name":"cncachehub","version":"v0.1.1","commit":"v0.1.1",...}
 
 # 3. systemd 状态
 systemctl status cncachehub-server.service
@@ -326,7 +324,7 @@ systemctl status cncachehub-server.service
 ./install.sh update --source=release --version=latest
 
 # 升级到特定版本
-./install.sh update --source=release --version=v0.1.1
+./install.sh update --source=release --version=v0.1.2
 
 # 降级（注意数据兼容性！）
 ./install.sh update --source=release --version=v0.0.9
