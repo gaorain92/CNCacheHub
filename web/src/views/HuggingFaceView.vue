@@ -16,6 +16,7 @@ import {
   listHuggingFaceTree,
 } from '@/api/huggingface'
 import type { HuggingFaceTreeFile } from '@/types/api'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const settings = useSettingsStore()
 const auth = useAuthStore()
@@ -55,16 +56,12 @@ const mirrorBaseUrl = computed(() => publicBaseUrl.value)
 
 async function copyMirrorUrl(): Promise<void> {
   const url = `${mirrorBaseUrl.value}/hf`
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      await navigator.clipboard.writeText(url)
-      ElMessage.success('已复制：' + url)
-    } else {
-      // 退化：用 prompt 提示
-      window.prompt('复制镜像地址：', url)
-    }
-  } catch {
-    window.prompt('复制镜像地址：', url)
+  const ok = await copyToClipboard(url)
+  if (ok) {
+    ElMessage.success('已复制：' + url)
+  } else {
+    // copyToClipboard 内部已经 fallback 到 prompt，提示用户用弹窗
+    ElMessage.info('已弹出复制对话框，请 Ctrl+C')
   }
 }
 

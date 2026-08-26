@@ -5,6 +5,7 @@ import { ElMessage, ElTabPane, ElTabs } from 'element-plus'
 import DaemonJsonBlock from '@/components/DaemonJsonBlock.vue'
 import { useClientConfigStore } from '@/stores/client-config'
 import { downloadClientConfigBundle } from '@/api/client-config'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const config = useClientConfigStore()
 
@@ -35,13 +36,13 @@ async function regen(): Promise<void> {
 
 async function copyContent(): Promise<void> {
   if (!config.data) return
-  try {
-    await navigator.clipboard.writeText(config.data.content)
+  const ok = await copyToClipboard(config.data.content)
+  if (ok) {
     copied.value = true
     ElMessage.success('已复制到剪贴板')
     setTimeout(() => (copied.value = false), 1500)
-  } catch {
-    ElMessage.error('复制失败')
+  } else {
+    ElMessage.warning('请用弹窗手动复制（Ctrl+C）')
   }
 }
 

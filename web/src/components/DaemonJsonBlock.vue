@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Document, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useDockerStore } from '@/stores/docker'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const docker = useDockerStore()
 const copied = ref(false)
@@ -11,15 +12,15 @@ async function load(): Promise<void> {
   await docker.fetchDaemonJson()
 }
 
-async function copyToClipboard(): Promise<void> {
+async function onCopy(): Promise<void> {
   if (!docker.daemonJson) return
-  try {
-    await navigator.clipboard.writeText(docker.daemonJson)
+  const ok = await copyToClipboard(docker.daemonJson)
+  if (ok) {
     copied.value = true
     ElMessage.success('已复制到剪贴板')
     setTimeout(() => (copied.value = false), 1500)
-  } catch {
-    ElMessage.error('复制失败')
+  } else {
+    ElMessage.warning('请用弹窗手动复制（Ctrl+C）')
   }
 }
 
@@ -42,7 +43,7 @@ onMounted(() => {
           type="primary"
           size="small"
           :disabled="!docker.daemonJson"
-          @click="copyToClipboard"
+          @click="onCopy"
         >
           {{ copied ? '已复制' : '复制' }}
         </el-button>

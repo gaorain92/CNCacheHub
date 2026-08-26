@@ -19,6 +19,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useDNSStore } from '@/stores/dns'
 import { useSteamcmdStore } from '@/stores/steamcmd'
 import { useAuthStore } from '@/stores/auth'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const dns = useDNSStore()
 const steamcmd = useSteamcmdStore()
@@ -147,13 +148,13 @@ steamcmd +login anonymous +app_update <APP_ID> validate +quit`
 })
 
 async function copy(text: string, key: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text)
+  const ok = await copyToClipboard(text)
+  if (ok) {
     copied.value = key
     ElMessage.success('已复制到剪贴板')
     setTimeout(() => (copied.value = null), 1500)
-  } catch {
-    ElMessage.error('复制失败')
+  } else {
+    ElMessage.warning('请用弹窗手动复制（Ctrl+C）')
   }
 }
 
